@@ -4,7 +4,8 @@ setup walks through what grounded-web needs and writes the Hermes config:
   1. a search backend: SearXNG (your instance) or DuckDuckGo (built into Hermes, no key);
   2. web_extract on grounded-web;
   3. optional Crawl4AI, in its own environment, with a headless Chromium (about 300 MB);
-  4. a live test: one real page, one 404.
+  4. auto-loading the bundled research skill;
+  5. a live test: one real page, one 404.
 Every step is shown before it runs. Nothing is installed without a yes, or the matching flag.
 """
 
@@ -191,8 +192,29 @@ def step_crawl4ai(args, s: dict, interactive: bool) -> None:
         print("   ! The browser download failed; Crawl4AI stays off until it succeeds.")
 
 
+SKILL = "grounded-web:web-research"
+
+
+def step_skill(args, interactive: bool) -> None:
+    print("\n4. Research skill")
+    print(f"   {SKILL} tells the model to open pages instead of answering from search snippets,")
+    print("   one URL per web_extract call. Auto-loading puts it in every new session (about 600 tokens).")
+    current = ((_config().get("skills") or {}).get("auto_load")) or []
+    if not isinstance(current, list):
+        current = []
+    if SKILL in current:
+        print("   Already auto-loaded.")
+        return
+    wanted = args.skill if args.skill is not None else _confirm("   Auto-load it?", True, interactive)
+    if not wanted:
+        print(f"   Skipped. Load it by hand with /skill {SKILL}.")
+        return
+    import json
+    _set("skills.auto_load", json.dumps([*current, SKILL]))
+
+
 def step_test() -> bool:
-    print("\n4. Test")
+    print("\n5. Test")
     pages = asyncio.run(extract.read_pages([TEST_PAGE, TEST_MISSING]))
     ok, missing = pages
     good = bool(ok.content) and not ok.error
@@ -214,6 +236,9 @@ def _setup_parser(parser) -> None:
     c4 = setup.add_mutually_exclusive_group()
     c4.add_argument("--crawl4ai", dest="crawl4ai", action="store_true", default=None, help="Install Crawl4AI")
     c4.add_argument("--no-crawl4ai", dest="crawl4ai", action="store_false", help="Do not install Crawl4AI")
+    sk = setup.add_mutually_exclusive_group()
+    sk.add_argument("--skill", dest="skill", action="store_true", default=None, help="Auto-load the research skill")
+    sk.add_argument("--no-skill", dest="skill", action="store_false", help="Do not auto-load the research skill")
     setup.add_argument("--yes", action="store_true", help="Accept the defaults without asking")
     parser.set_defaults(func=handle)
 
@@ -235,6 +260,7 @@ def handle(args) -> int:
     step_search(args, s, interactive)
     step_extract(s)
     step_crawl4ai(args, s, interactive)
+    step_skill(args, interactive)
     passed = step_test()
     print("\nRestart Hermes (or `hermes gateway restart`) so running sessions pick up the changes.")
     return 0 if passed else 1

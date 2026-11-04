@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 from typing import Any, Optional
 
 from . import footer, verify
@@ -82,6 +83,11 @@ def register(ctx) -> None:
     ctx.register_hook("pre_llm_call", _start_turn)
     ctx.register_hook("post_tool_call", _record_tool)
     ctx.register_hook("transform_llm_output", _append_footer)
+    skills = Path(__file__).parent / "skills"
+    if hasattr(ctx, "register_skill") and skills.is_dir():
+        for child in sorted(skills.iterdir()):
+            if (child / "SKILL.md").is_file():
+                ctx.register_skill(child.name, child / "SKILL.md")  # loads as grounded-web:<name>
     if hasattr(ctx, "register_cli_command"):
         from . import cli
         cli.register(ctx)

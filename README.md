@@ -66,9 +66,10 @@ Hermes asks before installing the Python dependencies (trafilatura, pypdf). Then
 1. chooses a search backend: your **SearXNG** instance (it checks that JSON output is enabled) or **DuckDuckGo** (`ddgs`, built into Hermes, no key);
 2. sets `web.extract_backend: grounded-web`;
 3. offers **Crawl4AI**, which is optional;
-4. tests one real page and one missing page.
+4. offers to auto-load the bundled skill `grounded-web:web-research` (it tells the model to open pages instead of answering from snippets, one URL per call; about 600 tokens per session);
+5. tests one real page and one missing page.
 
-Non-interactive: `hermes grounded-web setup --yes --search ddgs --crawl4ai`.
+Non-interactive: `hermes grounded-web setup --yes --search ddgs --crawl4ai --skill`.
 Check at any time with `hermes grounded-web status`.
 
 ### Crawl4AI
@@ -94,9 +95,10 @@ Search and page reading are separate settings: grounded-web only reads pages. It
 - **Hooks:** `pre_llm_call` (starts a record for the turn), `post_tool_call` (keeps the text of `web_extract` results), `transform_llm_output` (appends the footer; the answer itself is not changed, so a streamed answer is not printed twice).
 - **Web provider:** `grounded-web`, extract only.
 - **CLI:** `hermes grounded-web status|setup`.
+- **Skill:** `grounded-web:web-research`, read-only, loaded only if you auto-load it or call it.
 - **Network:** downloads the URLs the agent asks `web_extract` to read, directly from this machine with a desktop browser user agent. `setup` also checks the SearXNG URL you give it and reads two test pages on iana.org. Crawl4AI's browser loads the same URLs and their page assets.
 - **Processes:** one Crawl4AI child process per page, at most three at once, each stopped after 60 seconds.
-- **Writes:** `web.search_backend`, `web.extract_backend` and, for SearXNG, `SEARXNG_URL` in `.env`, all through Hermes's own config functions and only during `setup`. Nothing else is stored: page text lives in memory for the current turn only.
+- **Writes:** `web.search_backend`, `web.extract_backend`, `skills.auto_load` and, for SearXNG, `SEARXNG_URL` in `.env`, all through Hermes's own config functions and only during `setup`. Nothing else is stored: page text lives in memory for the current turn only.
 - **No telemetry**, no credentials read, no self-update.
 
 ## Limits
