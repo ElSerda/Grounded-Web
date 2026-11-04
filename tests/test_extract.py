@@ -1,0 +1,84 @@
+"""Extraction helpers that need no network."""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _pkg import load  # noqa: E402
+
+import importlib  # noqa: E402
+
+load()
+ex = importlib.import_module("grounded_web.extract")
+
+MAIN = "Game Changer\nGear up with the GeForce GPU X and AI-powered DLSS. " * 10
+BROWSER = """
+# GPU X
+[Shop now](https://shop.example/gpu-x)
+## Specs
+| Spec | Value |
+| --- | --- |
+| CUDA Cores | 10752 |
+| Boost Clock (GHz) | 2.62 |
+| Maximum Digital Resolution | 4K at 480Hz or 8K at 165Hz with DSC |
+| Total Graphics Power (W) | 360 |
+## Footer
+[Privacy](https://maker.example/privacy) © 2026
+"""
+
+
+def test_complement_adds_only_rows_with_new_values():
+    extra = ex.complement(MAIN, BROWSER)
+    assert "## Specs" in extra
+    assert "| CUDA Cores | 10752 |" in extra
+    assert "8K at 165Hz" in extra
+    assert "Shop now" not in extra and "Privacy" not in extra
+    assert "http" not in extra
+
+
+def test_complement_skips_values_already_in_main_text():
+    assert "10752" not in ex.complement(MAIN + " It has 10752 cores.", BROWSER)
+
+
+def test_merge_uses_browser_text_when_main_text_is_empty():
+    content, engine = ex.merge("", BROWSER)
+    assert engine == "crawl4ai" and "8K at 165Hz" in content and "](" not in content
+
+
+def test_merge_appends_complement():
+    content, engine = ex.merge(MAIN, BROWSER)
+    assert engine == "trafilatura+crawl4ai"
+    assert content.startswith(MAIN)
+    assert "More values from this page" in content
+
+
+def test_merge_without_browser():
+    assert ex.merge(MAIN, "") == (MAIN, "trafilatura")
+
+
+def test_block_and_error_pages():
+    assert ex.looks_blocked("Just a moment...", "Checking your browser before accessing.")
+    assert ex.looks_blocked("Page introuvable", "Désolé, cette page n'existe plus.")
+    assert ex.looks_blocked("Oops", "404 - the page you requested was not found")
+    assert ex.looks_blocked("Access Denied", "You don't have permission to access this server.")
+
+
+def test_long_pages_are_never_called_blocked():
+    assert ex.looks_blocked("HTTP 404 explained", "The 404 status code means not found. " * 60) == ""
+
+
+def test_normal_short_page_is_kept():
+    assert ex.looks_blocked("llama.cpp 0.8.0", "Release notes: faster CUDA kernels.") == ""
+
+
+def test_bot_wall_is_caught_even_on_a_long_page():
+    wall = "Automated bot check in progress\nThis should only take a few seconds.\nDrag the handle to the target\n"
+    assert ex.looks_blocked("TechPowerUp", wall + "filler text " * 300)
+
+
+def test_unlabeled_number_rows_are_not_added():
+    md = "## Benchmarks\n117.5 1%\n240 fps (37%)\n| Memory Speed | 30000 effective |"
+    extra = ex.complement("Some text about the card.", md)
+    assert "117.5" not in extra and "240 fps" not in extra
+    assert "Memory Speed" in extra
