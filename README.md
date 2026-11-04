@@ -57,7 +57,7 @@ It does not decide which source is right, and it does not check claims without n
 Requires Hermes Agent 0.22.6 or later.
 
 ```
-hermes plugins install ElSerda/grounded-web
+hermes plugins install ElSerda/Beta-Grounded-Web
 hermes grounded-web setup
 ```
 
