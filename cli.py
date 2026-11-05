@@ -139,7 +139,8 @@ def print_state(s: dict, title: str = "grounded-web status") -> None:
         warn("Crawl4AI           not installed (pages are read with trafilatura only)")
     others = compat.other_reply_rewriters("grounded-web")
     if others:
-        warn(f"Reply rewriters    {', '.join(others)} also rewrite replies, and Hermes keeps only one rewrite.")
+        verb = "also rewrites" if len(others) == 1 else "also rewrite"
+        warn(f"Reply rewriters    {', '.join(others)} {verb} replies, and Hermes keeps only one rewrite.")
         info("grounded-web leaves the reply to them (show_sources: auto). Set it to `always` to show its")
         info("footer anyway, or turn the other plugin off: `hermes plugins disable <name>`.")
 
