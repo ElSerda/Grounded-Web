@@ -1,10 +1,11 @@
 # grounded-web
 
-A Hermes Agent plugin for web answers you can check.
+A Hermes Agent plugin for web answers built from pages that were really read.
 
 - **Reads pages and PDFs on your machine** for `web_extract`: no API key, no extraction service.
+- **Reports 404s, error pages and bot walls as errors**, so the model never takes them for content.
 - **Lists the pages the answer really used**, under the answer, with clickable links. Pages are taken from the tool results, never from the model's text, so the list cannot name a page that was not read.
-- **Checks the answer's values against those pages**: every number with a unit, price, version and large number in the answer must appear in an opened page, and disagreements between pages are found. The check is plain code: no tokens, no model call. Its result is shown only when you turn on `verify`.
+- **Pushes the model to open pages** instead of answering from search snippets: a bundled skill and a one-sentence reminder.
 
 A real run, fully local: Gemma 4 E4B in LM Studio, DuckDuckGo search, pages read by grounded-web.
 
@@ -22,18 +23,6 @@ Sources (opened pages):
 - Nous Portal Subscription: Plans, Credits, and Hermes Agent Setup — Agentic Bo...: https://agenticbotsitter.com/guides/nous-portal-subscription-hermes-agent/
 ```
 
-With `verify: true`, the check is added below the sources. For that answer:
-
-```
-✓ All 8 numbers in this answer appear in the opened pages.
-```
-
-And when a model writes a value no opened page holds (Qwen3-8B, asked for the latest llama.cpp release, with the releases page open):
-
-```
-⚠ The number in this answer is not in the opened pages: v0.5.2
-```
-
 Links are written out in full rather than as Markdown links: the Hermes CLI prints replies as plain text, where a bare link stays clickable (Ctrl+click in Windows Terminal) and Desktop and chat apps link it too.
 
 The footer is in English or French. By default it follows Hermes's `display.language`, like Hermes's own notices; set `language: answer` to follow the language of the reply instead.
@@ -43,10 +32,10 @@ The footer is in English or French. By default it follows Hermes's `display.lang
 A web answer can go wrong in three places, and the model cannot see any of them.
 
 1. **The page reader drops the data.** Main-text extractors discard what looks like page furniture. On the Nous Portal home page, trafilatura keeps the text but drops the plan list with each plan's Cloud agent size ("up to 4 GB RAM and 25 GB disk", "up to 8 GB RAM and 100 GB disk"). Without it, the answer above could not be given from that page.
-2. **A source drops the context.** Third-party pages copy a figure without its condition (which plan, which connector, which model size), or from a sibling product. A model that reads only that page repeats it faithfully.
-3. **The model fills gaps from memory.** In tests, local models wrote version numbers, core counts and power figures that were on none of the pages they had opened, like the `v0.5.2` above.
+2. **The page is not a page.** A 404, an "access denied" page or a bot wall ("Automated bot check in progress") often answers HTTP 200. Read as content, it gives the model nothing, or worse, a page of the wrong text.
+3. **The model answers from snippets or memory.** Small models in particular stop at the search results when a snippet holds a number, or fill gaps from memory. In tests, Qwen3-8B gave `v0.5.2` as the latest llama.cpp release with the releases page open, where no such version appears.
 
-grounded-web fixes the first and makes the other two visible.
+grounded-web fixes the first two, pushes against the third, and shows which pages the answer came from so you can check it yourself.
 
 ## How a page is read
 
@@ -57,15 +46,9 @@ grounded-web fixes the first and makes the other two visible.
 
 Each page is capped at 30,000 characters.
 
-## How the check works
+## Which pages are listed
 
-After each turn that used a web tool, the plugin compares the final answer with the text of every page `web_extract` returned in the conversation so far, so an answer may rely on a page opened a few turns earlier; such pages are listed as "opened earlier". With no page opened at all, it checks against the search snippets and says so.
-
-- Spellings are matched: `1 344 Go/s` = `1,344 GB/sec`, `65,3 TFLOPS` = `65.3 TFLOPS¹`, `256‑bit` = `256-bit`, and a unit in a table header (`| AI TOPS | 2064 |`) counts.
-- Small bare numbers (generations, counts), product codes (`GB203-400-A1`), links and any source list the model wrote itself are skipped.
-- A conflict is two pages giving different values with the same unit after the same words.
-
-It does not decide which source is right, and it does not check claims without numbers.
+Every page `web_extract` returned with real content in this turn. A page opened in an earlier turn of the conversation is added under "Also used, opened earlier in this conversation" when the answer contains one of its values with a unit, a price or a version: an answer may rely on a page read a few turns before. When no page was opened, the footer says that the answer relies on search snippets only.
 
 ## Install
 
@@ -110,7 +93,6 @@ Under Settings → Plugins in Hermes Desktop, or `plugins.entries.grounded-web.s
 |---|---|---|
 | `language` | `auto` | Footer language: `auto` (Hermes's `display.language`; English for languages other than en/fr), `answer` (the reply's language), `en` or `fr` |
 | `show_sources` | `auto` | `auto`: list the opened pages, unless another plugin also rewrites replies (see below). `always`: list them anyway. `never`: no list |
-| `verify` | `false` | Show the value check under the sources |
 | `remind` | `true` | Add one sentence to each user message (about 50 tokens): search snippets are not sources, open the pages |
 
 Search and page reading are separate settings: grounded-web only reads pages. It works with any search backend.
@@ -133,10 +115,8 @@ Hermes runs every plugin's `transform_llm_output` hook but keeps only the first 
 
 ## Limits
 
-- The check confirms that a value appears in an opened page. It cannot tell whether that page is right, unless another opened page disagrees.
-- A disagreement can be two correct values for different conditions (two plans, two connectors). It shows where to look, not which page is wrong.
-- Values without a number and unit it knows (`3-slot`, `5th generation`, `Qwen3`) are not checked. Model sizes (`70B`) and context lengths (`128K`) are.
-- Values computed by the model (`30 Gbps` from "30000 MT/s") are reported as missing. That is on purpose: they are not in the sources.
+- The footer says which pages the answer was built from. It does not check that each sentence of the answer matches them: that would take another model call per reply and still not be reliable.
+- An earlier page is matched on values with a unit, a price or a version; an answer that reuses only its prose is not linked to it.
 - Pages behind logins or strong bot protection cannot be read; they come back as errors.
 
 ## Development

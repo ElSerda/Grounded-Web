@@ -27,10 +27,6 @@ def extract_result(*pages):
     return json.dumps({"results": [dict(p) for p in pages]})
 
 
-def search_result(*hits):
-    return json.dumps({"success": True, "data": {"web": [dict(h) for h in hits]}})
-
-
 PAGE = {"url": "https://maker.example/gpu", "content": "Total Graphics Power: 360 W. Memory: 16 GB GDDR7."}
 REVIEW = {"url": "https://review.example/gpu", "content": "Boost clock 2.62 GHz, L2 cache 64 MB."}
 
@@ -51,26 +47,18 @@ def setup(settings=None):
     return ctx
 
 
-def test_footer_lists_pages_and_flags_missing_value():
-    ctx = setup({"verify": True})
-    answer = "La carte consomme 360 W et a 16 Go, pour 999 $."
-    out = run_turn(ctx, answer, [("web_search", "{}"), ("web_extract", extract_result(PAGE))])
-    assert out.startswith(answer + "\n\n")  # append-only
-    assert "Sources (pages ouvertes) :\n- https://maker.example/gpu" in out
-    assert "⚠ 1 valeur chiffrée sur 3 ne figure pas dans les pages ouvertes : 999 $" in out
+def test_footer_lists_the_opened_pages_with_titles():
+    ctx = setup()
+    page = dict(PAGE, title="GPU X | Maker")
+    answer = "La carte consomme 360 W et coûte 999 $."
+    out = run_turn(ctx, answer, [("web_search", "{}"), ("web_extract", extract_result(page))])
+    assert out == answer + "\n\nSources (pages ouvertes) :\n- GPU X | Maker: https://maker.example/gpu"
 
 
-def test_all_found_reads_plainly():
-    ctx = setup({"verify": True})
-    out = run_turn(ctx, "The card draws 360 W and has 16 GB of memory.", [("web_extract", extract_result(PAGE))])
-    assert "Sources (opened pages):" in out
-    assert "✓ All 2 numbers in this answer appear in the opened pages." in out
-
-
-def test_single_number_wording():
-    ctx = setup({"verify": True})
+def test_english_answer_gets_english_footer():
+    ctx = setup()
     out = run_turn(ctx, "The card draws 360 W.", [("web_extract", extract_result(PAGE))])
-    assert "✓ The number in this answer appears in the opened pages." in out
+    assert out.endswith("Sources (opened pages):\n- https://maker.example/gpu")
 
 
 def test_search_only_turn_says_so():
@@ -102,37 +90,21 @@ def test_turn_without_web_tools_is_left_alone():
     assert run_turn(ctx, "Bonjour.", [("read_file", "{}")]) is None
 
 
-def test_settings_turn_parts_off():
-    ctx = setup({"verify": False, "language": "en"})
-    out = run_turn(ctx, "La carte consomme 360 W, pour 999 $.", [("web_extract", extract_result(PAGE))])
-    assert "Sources (opened pages):" in out
-    assert "numbers" not in out
-
-
-def test_search_only_turn_is_checked_against_snippets():
-    ctx = setup({"verify": True})
-    hit = {"url": "https://maker.example/gpu", "title": "GPU X", "description": "GPU X draws 360 W, 16 GB GDDR7."}
-    out = run_turn(ctx, "La carte consomme 360 W et coûte 999 $.", [("web_search", search_result(hit))])
-    assert "Aucune page ouverte" in out
-    assert "⚠ 1 valeur chiffrée sur 2 ne figure pas dans les extraits de recherche : 999 $" in out
-
-
-def test_pages_from_earlier_turns_still_count():
-    ctx = setup({"verify": True})
+def test_earlier_page_is_listed_only_when_the_answer_uses_it():
+    ctx = setup()
     run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))])
-    # Second turn opens another page but also reuses the first page's values.
-    out = run_turn(ctx, "Boost à 2,62 GHz, 64 Mo de cache L2 et 360 W.", [("web_extract", extract_result(REVIEW))])
+    out = run_turn(ctx, "Boost à 2,62 GHz et 360 W.", [("web_extract", extract_result(REVIEW))])
     assert "Sources (pages ouvertes) :\n- https://review.example/gpu" in out
-    assert "Aussi utilisées, ouvertes plus tôt dans la conversation :\n- https://maker.example/gpu" in out
-    assert "✓ Les 3 valeurs chiffrées de la réponse figurent dans les pages ouvertes." in out
+    assert out.endswith("Aussi utilisées, ouvertes plus tôt dans la conversation :\n- https://maker.example/gpu")
+    out = run_turn(ctx, "Boost à 2,62 GHz.", [("web_extract", extract_result(REVIEW))])
+    assert "maker.example" not in out
 
 
 def test_sessions_do_not_share_pages():
-    ctx = setup({"verify": True})
+    ctx = setup()
     run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))], session="a")
     out = run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(REVIEW))], session="b")
     assert "maker.example" not in out
-    assert "⚠ La valeur chiffrée de la réponse ne figure pas dans les pages ouvertes : 360 W" in out
 
 
 def test_reminder_is_added_to_each_turn_and_can_be_turned_off():
@@ -146,14 +118,6 @@ def test_footer_can_follow_the_answer_language():
     ctx = setup({"language": "answer"})
     out = run_turn(ctx, "The card draws 360 W.", [("web_extract", extract_result(PAGE))])
     assert "Sources (opened pages):" in out
-
-
-def test_default_footer_is_sources_only_with_titles():
-    ctx = setup()
-    page = dict(PAGE, title="GPU X | Maker")
-    out = run_turn(ctx, "La carte consomme 360 W et coûte 999 $.", [("web_extract", extract_result(page))])
-    assert out.endswith("Sources (pages ouvertes) :\n- GPU X | Maker: https://maker.example/gpu")
-    assert "valeur" not in out.split("\n\n", 1)[1]
 
 
 def test_steps_aside_for_another_reply_rewriter(monkeypatch):
@@ -170,14 +134,6 @@ def test_sources_mode_values():
         "auto", "never", "always", "never", "always", "never", "auto", "auto"]
 
 
-def test_never_hides_the_sources():
-    ctx = setup({"show_sources": "never", "verify": True})
-    out = run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))])
-    assert "maker.example" not in out and "✓" in out
-
-
-def test_single_missing_number_wording():
-    ctx = setup({"verify": True, "language": "en"})
-    page = {"url": "https://repo.example/releases", "content": "Release b12061 is out."}
-    out = run_turn(ctx, "The latest stable version is v0.5.2.", [("web_extract", extract_result(page))])
-    assert out.endswith("⚠ The number in this answer is not in the opened pages: v0.5.2")
+def test_never_turns_the_footer_off():
+    ctx = setup({"show_sources": "never"})
+    assert run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))]) is None

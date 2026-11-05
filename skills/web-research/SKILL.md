@@ -15,8 +15,8 @@ metadata:
 # Web Research Skill
 
 Answer from pages you actually read: search to find them, `web_extract` to read them. The
-grounded-web plugin appends the pages you opened and checks the answer's values against them,
-so do not write a sources list yourself. For a document or report with numbered inline
+grounded-web plugin appends the pages you opened under your answer, so do not write a sources
+list yourself. For a document or report with numbered inline
 citations, use `grounded-citations` instead.
 
 ## When to Use
@@ -64,4 +64,4 @@ and any search backend for `web_search`.
 ## Verification
 
 Before answering, check that you called `web_extract` and that every value you give appears in
-those pages. The plugin's footer reports any value it could not find.
+the pages you opened.

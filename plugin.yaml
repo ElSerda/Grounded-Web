@@ -2,11 +2,11 @@ name: grounded-web
 version: 0.1.0
 manifest_version: 2
 api_version: 1
-description: "Local page and PDF extraction for web_extract, the pages an answer really used, and a check of the answer's values against them"
+description: "Local page and PDF extraction for web_extract, and the pages an answer really used, as clickable sources"
 author: ElSerda
 license: MIT
 requires_hermes: ">=0.22.6"
-tags: [web, research, citations, verification, grounding]
+tags: [web, research, citations, sources, extraction]
 provides_hooks:
   - pre_llm_call
   - post_tool_call
@@ -29,11 +29,6 @@ config_schema:
     default: auto
     label: List opened pages
     description: "auto steps aside when another enabled plugin also rewrites replies (Hermes keeps only one rewrite); always adds the footer; never turns it off"
-  verify:
-    type: bool
-    default: false
-    label: Show the value check under the answer
-    description: "Adds lines such as '2 of the 22 numbers in this answer are not in the opened pages'"
   remind:
     type: bool
     default: true

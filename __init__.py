@@ -1,9 +1,9 @@
-"""grounded-web: shows which pages a web answer used, and checks the answer's values against them.
+"""grounded-web: reads web pages on this machine and lists the pages a web answer used.
 
 Hooks only, no extra model call:
   pre_llm_call          starts a fresh record for the turn and adds a one-sentence reminder
   post_tool_call        keeps the text of every page web_extract returned, for the whole session
-  transform_llm_output  appends the opened pages and the check to the answer (append-only,
+  transform_llm_output  appends the opened pages to the answer (append-only,
                         so a streamed answer is not reprinted)
 """
 
@@ -15,7 +15,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Optional
 
-from . import compat, footer, verify
+from . import compat, footer, values
 
 # Page text is kept in memory per session, so an answer can rely on a page opened in an
 # earlier turn. Bounded: oldest pages, then oldest sessions, are dropped first. (Hermes's
@@ -65,21 +65,12 @@ def _pages(result: Any) -> list[dict]:
     ]
 
 
-def _snippets(result: Any) -> list[dict]:
-    """Search hits as pseudo-pages (title + description), from a web_search result."""
-    hits = (_payload(result).get("data") or {}).get("web") or []
-    return [
-        {"url": h["url"], "content": f"{h.get('title', '')}\n{h.get('description', '')}"}
-        for h in hits if isinstance(h, dict) and h.get("url")
-    ]
-
-
 # Added to the user's message, a trusted position: inside a tool result Hermes marks text as data
 # the model must not follow. Small models otherwise answer from snippets that happen to hold numbers.
 REMINDER = (
     "[grounded-web] If you search the web for this message: search snippets are not sources. "
     "Open the most relevant results with web_extract, one URL per call, before answering. "
-    "Your answer is checked against the pages you open."
+    "The pages you open are listed under your answer."
 )
 
 
@@ -105,13 +96,10 @@ def _record_tool(tool_name: str = "", result: Any = None, session_id: str = "", 
     if tool_name not in ("web_search", "web_extract"):
         return
     pages = _pages(result) if tool_name == "web_extract" else []
-    hits = _snippets(result) if tool_name == "web_search" else []
     with _lock:
-        turn = _turns.setdefault(session_id, {"opened": [], "searched": False, "snippets": {}})
+        turn = _turns.setdefault(session_id, {"opened": [], "searched": False})
         if tool_name == "web_search":
             turn["searched"] = True
-        for hit in hits:
-            turn["snippets"].setdefault(hit["url"], hit["content"])
         for page in pages:
             _remember(session_id, page["url"], page["title"], page["content"])
             if page["url"] not in turn["opened"]:
@@ -127,20 +115,16 @@ def _append_footer(response_text: str = "", session_id: str = "", **_: Any) -> O
     mode = compat.sources_mode(_setting("show_sources", "auto"))
     # Hermes keeps only the first plugin rewrite of a reply: leave it to another rewriter rather
     # than hide its output, unless the user asked for this footer anyway (show_sources: always).
+    if mode == "never":
+        return None
     if mode == "auto" and compat.other_reply_rewriters("grounded-web", getattr(_ctx, "has_plugin", None)):
         return None
-    pages = [{"url": u, "content": c} for u, (_, c) in known.items()]
     titles = {u: t for u, (t, _) in known.items()}
-    # No page opened in this session: check against this turn's search snippets, and say so.
-    basis = "pages" if pages else "snippets"
-    if not pages:
-        pages = [{"url": u, "content": c} for u, c in turn["snippets"].items()]
-    # Always run: it tells which earlier pages the answer relies on. Shown only with `verify` on.
-    report = verify.check(response_text, pages) if pages else None
-    earlier = [u for u in (report.used if report and basis == "pages" else []) if u not in turn["opened"]]
+    # Pages from earlier turns are listed only when the answer uses one of their values.
+    earlier_pages = [{"url": u, "content": c} for u, (_, c) in known.items() if u not in turn["opened"]]
+    earlier = values.pages_used(response_text, earlier_pages) if earlier_pages else []
     lang = footer.language_of(response_text, _setting("language", "auto"))
-    text = footer.build(turn["opened"], turn["searched"], report, lang, mode != "never", basis, earlier,
-                        titles=titles, show_check=bool(_setting("verify", False)))
+    text = footer.build(turn["opened"], turn["searched"], lang, earlier, titles)
     # Keep the answer byte for byte: Hermes then prints only the added footer after a streamed reply.
     return f"{response_text}\n\n{text}" if text else None
 

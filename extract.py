@@ -23,7 +23,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import verify
+from . import values
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ def strip_links(markdown: str) -> str:
 def _value_keys(text: str) -> set[tuple[str, str]]:
     """Values with a unit, and bare numbers of 100 or more that are not years (copyright lines)."""
     keys = set()
-    for occ in verify._index_page("", text):  # noqa: SLF001 - same package
+    for occ in values.index_page("", text):
         numeric = [float(v) for v in occ.values if re.fullmatch(r"\d+(?:\.\d+)?", v)]  # versions excluded
         if occ.unit or any(n >= 100 and not (1900 <= n < 2100 and n.is_integer()) for n in numeric):
             keys.update((v, occ.unit) for v in occ.values)
@@ -109,7 +109,7 @@ def _value_keys(text: str) -> set[tuple[str, str]]:
 def _has_label(line: str) -> bool:
     """True when a line names what its values are, unlike benchmark rows such as "117.5 1%"."""
     words = re.findall(r"[^\W\d_]{3,}", line.lower())
-    return any(w not in verify._SPELLING_TO_UNIT for w in words)  # noqa: SLF001 - same package
+    return any(w not in values.UNIT_SPELLINGS for w in words)
 
 
 def complement(main_text: str, browser_md: str) -> str:

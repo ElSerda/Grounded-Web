@@ -1,20 +1,18 @@
-"""Checks the numbers in an answer against the text of the pages the agent opened.
+"""Spots values (numbers with a unit, prices, versions, large numbers) in text. Internal only.
 
-Two checks, both deterministic and local:
+Two uses, where a miss or an extra match costs little:
 
-* grounding: every number with a unit, large bare number, price or version in the
-  answer must appear in at least one opened page, with an equivalent unit;
-* conflicts: when the pages give different values after the same words
-  ("8K at 120Hz" on one page, "8K at 165Hz" on another), both values are reported.
+* extract: which lines of Crawl4AI's browser view hold values the main text lacks;
+* the footer: which pages opened in earlier turns an answer relies on.
 
-Nothing here decides which source is right. It only says what the pages contain.
+Nothing here is shown to the user as a verdict on the answer.
 """
 
 from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # Canonical unit -> spellings, lowercase. Longer spellings first inside the regex.
 _UNITS: dict[str, tuple[str, ...]] = {
@@ -54,10 +52,10 @@ _UNITS: dict[str, tuple[str, ...]] = {
     "k-tokens": ("k",),
     "%": ("%",),
 }
-_SPELLING_TO_UNIT = {s: u for u, spellings in _UNITS.items() for s in spellings}
+UNIT_SPELLINGS = {s: u for u, spellings in _UNITS.items() for s in spellings}
 # gb/s is ambiguous (gigabytes or gigabits per second): keep it as bytes, which is far more common in specs.
-_SPELLING_TO_UNIT["gb/s"] = "gb/s"
-_UNIT_ALT = "|".join(sorted((re.escape(s) for s in _SPELLING_TO_UNIT), key=len, reverse=True))
+UNIT_SPELLINGS["gb/s"] = "gb/s"
+_UNIT_ALT = "|".join(sorted((re.escape(s) for s in UNIT_SPELLINGS), key=len, reverse=True))
 
 _CURRENCIES = {"$": "usd", "usd": "usd", "€": "eur", "eur": "eur", "£": "gbp", "gbp": "gbp"}
 
@@ -80,28 +78,12 @@ _FOOTER_MARKERS = ("Sources (pages ouvertes)", "Sources (opened pages)", "Verifi
 
 @dataclass(frozen=True)
 class Fact:
-    """One checkable value found in the answer."""
+    """One value found in an answer."""
 
     text: str  # as written in the answer
     kind: str  # quantity | price | version | number
     values: frozenset[str]  # candidate normalized numbers (ambiguous separators give two)
     unit: str = ""
-
-
-@dataclass
-class Conflict:
-    fact: Fact
-    context: str  # the words before the value, shared by both pages
-    found: dict[str, str] = field(default_factory=dict)  # url -> value as written there
-
-
-@dataclass
-class Report:
-    checked: list[Fact]
-    grounded: list[Fact]
-    missing: list[Fact]
-    conflicts: list[Conflict]
-    used: list[str] = field(default_factory=list)  # pages holding a value with a unit, price or version
 
 
 def _clean(text: str) -> str:
@@ -138,11 +120,11 @@ def _numbers(raw: str) -> frozenset[str]:
 
 
 def _unit(spelling: str) -> str:
-    return _SPELLING_TO_UNIT.get(spelling.lower(), spelling.lower())
+    return UNIT_SPELLINGS.get(spelling.lower(), spelling.lower())
 
 
 def extract_facts(answer: str) -> list[Fact]:
-    """Values in the answer worth checking. The sources footer and URLs are skipped."""
+    """Values in an answer. The sources footer, URLs and a sources list the model wrote are skipped."""
     for marker in _FOOTER_MARKERS:
         idx = answer.find(marker)
         if idx >= 0:
@@ -174,7 +156,7 @@ def extract_facts(answer: str) -> list[Fact]:
         add(m.span(), Fact(m.group(0).strip(), "quantity", _numbers(m.group(1)), _unit(m.group(2))))
     for m in _BARE_RE.finditer(text):
         values = _numbers(m.group(1))
-        # Small bare numbers are list counts, ordinals and generations: too common to check.
+        # Small bare numbers are list counts, ordinals and generations: too common to mean anything.
         if all(float(v) < 100 for v in values):
             continue
         add(m.span(), Fact(m.group(1).strip(), "number", values))
@@ -186,24 +168,22 @@ class _Occurrence:
     url: str
     values: frozenset[str]
     unit: str
-    written: str
-    before: str  # normalized words just before the value
     line: str = ""  # lowercased line or table row holding the value, for a unit written elsewhere in it
 
 
-def _index_page(url: str, text: str) -> list[_Occurrence]:
+def index_page(url: str, text: str) -> list[_Occurrence]:
     text = _clean(text)
     occ = []
     for m in _QUANTITY_RE.finditer(text):
-        occ.append(_Occurrence(url, _numbers(m.group(1)), _unit(m.group(2)), m.group(0).strip(), _before(text, m.start())))
+        occ.append(_Occurrence(url, _numbers(m.group(1)), _unit(m.group(2))))
     for m in _PRICE_RE.finditer(text):
         num = m.group(2) or m.group(3)
         cur = _CURRENCIES[(m.group(1) or m.group(4)).lower()]
-        occ.append(_Occurrence(url, _numbers(num), cur, m.group(0).strip(), _before(text, m.start())))
+        occ.append(_Occurrence(url, _numbers(num), cur))
     for m in _VERSION_RE.finditer(text):
-        occ.append(_Occurrence(url, frozenset({m.group(1).lower().lstrip("v")}), "version", m.group(0), _before(text, m.start())))
+        occ.append(_Occurrence(url, frozenset({m.group(1).lower().lstrip("v")}), "version"))
     for m in re.finditer(rf"(?<![\w.,])({_NUM})(?![\w])", text):
-        occ.append(_Occurrence(url, _numbers(m.group(1)), "", m.group(1), _before(text, m.start()), _line(text, m.start())))
+        occ.append(_Occurrence(url, _numbers(m.group(1)), "", _line(text, m.start())))
     return occ
 
 
@@ -211,13 +191,6 @@ def _line(text: str, pos: int) -> str:
     start = text.rfind("\n", 0, pos) + 1
     end = text.find("\n", pos)
     return text[start:end if end >= 0 else len(text)].lower()
-
-
-def _before(text: str, pos: int, words: int = 3) -> str:
-    chunk = text[max(0, pos - 60):pos]
-    chunk = re.split(r"[\n|:;]", chunk)[-1]  # stay inside the same line or table cell
-    toks = re.findall(r"[^\W\d_]+|\d+[a-z]+", chunk.lower())
-    return " ".join(toks[-words:])
 
 
 def _matches(fact: Fact, occ: _Occurrence) -> bool:
@@ -234,32 +207,14 @@ def _matches(fact: Fact, occ: _Occurrence) -> bool:
     return True
 
 
-def check(answer: str, pages: list[dict]) -> Report:
-    """pages: [{"url": ..., "content": ...}] as returned by web_extract."""
-    facts = extract_facts(answer)
-    index = [o for p in pages if p.get("content") for o in _index_page(p.get("url", ""), p["content"])]
-    grounded, missing, conflicts, used = [], [], [], []
+def pages_used(answer: str, pages: list[dict]) -> list[str]:
+    """URLs of the pages holding a value of the answer that has a unit, a currency or a version.
+
+    pages: [{"url": ..., "content": ...}]. Bare numbers are left out: they match too many pages.
+    """
+    facts = [f for f in extract_facts(answer) if f.kind != "number"]
+    index = [o for p in pages if p.get("content") for o in index_page(p.get("url", ""), p["content"])]
+    used: list[str] = []
     for fact in facts:
-        hits = [o for o in index if _matches(fact, o)]
-        (grounded if hits else missing).append(fact)
-        if fact.kind != "number":  # bare numbers match too many pages to say a page was used
-            used.extend(o.url for o in hits if o.url not in used)
-        if not hits or fact.kind == "number":
-            continue
-        # Same words before the value, same unit, different value, on another page.
-        for hit in hits:
-            # Only values written with their unit: bare numbers after a product name ("GeForce RTX 5090")
-            # are model numbers, not rival values.
-            if len(hit.before.split()) < 2 or not hit.unit:
-                continue
-            rivals = [
-                o for o in index
-                if o.url != hit.url and o.before == hit.before and o.unit == hit.unit and not (o.values & fact.values)
-            ]
-            if rivals:
-                c = Conflict(fact, hit.before, {hit.url: hit.written})
-                for r in rivals:
-                    c.found.setdefault(r.url, r.written)
-                conflicts.append(c)
-                break
-    return Report(facts, grounded, missing, conflicts, used)
+        used.extend(o.url for o in index if _matches(fact, o) and o.url not in used)
+    return used
