@@ -170,3 +170,16 @@ def test_sources_mode_values():
 def test_never_turns_the_footer_off():
     ctx = setup({"show_sources": "never"})
     assert run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))]) is None
+
+
+def test_model_is_told_the_footer_under_its_earlier_answers_is_not_its_own():
+    ctx = setup()
+    history = [{"role": "user", "content": "specs?"},
+               {"role": "assistant", "content": "It draws 360 W.\n\nSources (opened pages):\n- https://maker.example/gpu"}]
+    context = ctx.hooks["pre_llm_call"](session_id="s1", user_message="and the PSU?", conversation_history=history)
+    assert 'were added by grounded-web, not written by you' in context
+    assert '"Sources (opened pages):"' in context
+    plain = ctx.hooks["pre_llm_call"](session_id="s2", user_message="hi", conversation_history=[])
+    assert "not written by you" not in plain
+    ctx = setup({"remind": False})
+    assert "not written by you" in ctx.hooks["pre_llm_call"](session_id="s3", user_message="q", conversation_history=history)

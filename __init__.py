@@ -78,6 +78,24 @@ REMINDER = (
     "If a web_extract result lists pages it did not open, open the ones you still need. "
     "The pages you open are listed under your answer; do not write that list yourself."
 )
+# Hermes keeps the footer in the conversation, so a model sees it under its own earlier answers and
+# may copy it into an answer that opened nothing (seen with Nemotron 3 Ultra). Said only then.
+FOOTER_NOTE = (
+    "[grounded-web] The source lists under your earlier answers (\"{heading}\") were added by "
+    "grounded-web, not written by you. Do not write one: grounded-web adds it when pages were used."
+)
+
+
+def _footer_in_history(history: Any) -> str:
+    """The footer heading found under an earlier answer, if any."""
+    headings = [text[key] for text in footer._TEXT.values() for key in ("sources", "earlier")]
+    for message in history if isinstance(history, list) else []:
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            content = str(message.get("content") or "")
+            for heading in headings:
+                if heading in content:
+                    return heading
+    return ""
 
 
 def _pages_from_history(history: Any) -> list[dict]:
@@ -112,7 +130,11 @@ def _start_turn(session_id: str = "", user_message: Any = "", conversation_histo
         _questions.move_to_end(session_id)
         while len(_questions) > MAX_SESSIONS:
             _questions.popitem(last=False)
-    return REMINDER if _setting("remind", True) else None
+    parts = [REMINDER] if _setting("remind", True) else []
+    heading = _footer_in_history(conversation_history)
+    if heading and compat.sources_mode(_setting("show_sources", "auto")) != "never":
+        parts.append(FOOTER_NOTE.format(heading=heading))
+    return " ".join(parts) or None
 
 
 def _remember(session_id: str, url: str, title: str, content: str) -> None:
