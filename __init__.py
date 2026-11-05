@@ -259,6 +259,8 @@ def _append_footer(response_text: str = "", session_id: str = "", **_: Any) -> O
 def register(ctx) -> None:
     global _ctx
     _ctx = ctx
+    from . import extract
+    extract.setting = _setting  # llms_txt and respect_ai_optout reach the reader
     ctx.register_hook("pre_llm_call", _start_turn)
     ctx.register_hook("pre_tool_call", _guard_tool)
     ctx.register_hook("post_tool_call", _record_tool)

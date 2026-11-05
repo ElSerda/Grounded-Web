@@ -43,3 +43,13 @@ config_schema:
     default: true
     label: Relevant passages first
     description: "On a page longer than what Hermes shows the model (web.extract_char_limit), moves the passages that mention the question's terms to the top; nothing is removed"
+  llms_txt:
+    type: bool
+    default: true
+    label: Use the site's llms.txt
+    description: "When a site's llms.txt lists a Markdown (.md) version of the page, read that instead of the HTML; checked once per hour per site"
+  respect_ai_optout:
+    type: bool
+    default: true
+    label: Respect AI opt-outs
+    description: "A page that asks not to be used by AI (noai in X-Robots-Tag or a robots meta tag, or tdm-reservation: 1) comes back as an error instead of content"

@@ -22,7 +22,12 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import browser, values
+from . import browser, site_rules, values
+
+
+def setting(key: str, default):
+    """The plugin's settings; register() replaces this with Hermes's config lookup."""
+    return default
 
 logger = logging.getLogger(__name__)
 
@@ -442,7 +447,47 @@ async def read_page(client, url: str, slots: asyncio.Semaphore | None = None) ->
         return Page(url, error=f"could not read the page: {exc.__class__.__name__}: {exc}"[:300])
 
 
+async def _from_llms_txt(client, url: str) -> tuple[Page | None, str]:
+    """(the page's Markdown version listed in its site's llms.txt, or None; the llms.txt URL or "")."""
+    if not setting("llms_txt", True) or is_document(url, "", b""):
+        return None, ""
+    index = await site_rules.llms_index(client, url)
+    if not index:
+        return None, ""
+    llms_url, links = index
+    md_url = site_rules.markdown_version(url, links)
+    if not md_url:
+        return None, llms_url
+    try:
+        response = await client.get(md_url)
+    except Exception:  # noqa: BLE001 - fall back to the HTML page
+        return None, llms_url
+    ctype = response.headers.get("content-type", "").lower()
+    text = response.text.strip() if response.status_code == 200 and "html" not in ctype else ""
+    if not text:
+        return None, llms_url
+    title = site_rules.title_of(text) or url.rstrip("/").rsplit("/", 1)[-1]
+    return Page(url, title, text[:READ_CHARS], engine="llms.txt"), llms_url
+
+
+def _optout(status: int, headers: dict, html: str = "") -> str:
+    if not setting("respect_ai_optout", True):
+        return ""
+    reason = site_rules.ai_optout(headers, html)
+    return _origin(status, f"the site asks not to be used by AI ({reason})") if reason else ""
+
+
 async def _read_page(client, url: str, slots: asyncio.Semaphore | None = None) -> Page:
+    from_index, llms_url = await _from_llms_txt(client, url)
+    if from_index:
+        return from_index
+    page = await _read_page_itself(client, url, slots)
+    if llms_url and not page.error:
+        page.content += f"\n\n[grounded-web: this site publishes an index for language models: {llms_url}]"
+    return page
+
+
+async def _read_page_itself(client, url: str, slots: asyncio.Semaphore | None = None) -> Page:
     browser = None if is_document(url, "", b"") else asyncio.create_task(browser_view(url, slots))
     try:
         response, body, too_big = await _download(client, url)
@@ -452,6 +497,11 @@ async def _read_page(client, url: str, slots: asyncio.Semaphore | None = None) -
         fetch_error = f"could not download: {exc.__class__.__name__}: {exc}"[:300]
     else:
         fetch_error = f"HTTP {status} from origin" if status >= 400 else ""  # Hermes wording: no keyless rescue
+
+    if not fetch_error and (opted_out := _optout(status, dict(response.headers))):
+        if browser:
+            browser.cancel()
+        return Page(url, error=opted_out)
 
     if not fetch_error and is_document(url, ctype, body):
         if browser:
@@ -474,6 +524,10 @@ async def _read_page(client, url: str, slots: asyncio.Semaphore | None = None) -
     if not fetch_error:
         html = body[:MAX_HTML_BYTES].decode(response.encoding or "utf-8", "replace")
         headers = dict(response.headers)
+        if opted_out := _optout(status, headers, html):
+            if browser:
+                browser.cancel()
+            return Page(url, error=opted_out)
         title, main = await asyncio.to_thread(html_text, html, url)
 
     view = await browser if browser else {"success": False}

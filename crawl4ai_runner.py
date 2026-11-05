@@ -68,6 +68,10 @@ async def crawl(url: str, ws_url: str) -> dict:
     run = CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,
         page_timeout=35_000,
+        # Pages built by scripts (Vue, React...) fill in after the DOM is ready: wait for the page's
+        # scripts to load, then give them a second to fetch and render their data.
+        wait_until="load",
+        delay_before_return_html=1.0,
         markdown_generator=DefaultMarkdownGenerator(content_filter=Pruning()),
         verbose=False,
     )
