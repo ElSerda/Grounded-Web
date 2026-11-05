@@ -154,3 +154,23 @@ def test_default_footer_is_sources_only_with_titles():
     out = run_turn(ctx, "La carte consomme 360 W et coûte 999 $.", [("web_extract", extract_result(page))])
     assert out.endswith("Sources (pages ouvertes) :\n- GPU X | Maker: https://maker.example/gpu")
     assert "valeur" not in out.split("\n\n", 1)[1]
+
+
+def test_steps_aside_for_another_reply_rewriter(monkeypatch):
+    monkeypatch.setattr(gw.compat, "other_reply_rewriters", lambda own: ["other-footer"])
+    ctx = setup()
+    assert run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))]) is None
+    ctx = setup({"show_sources": "always"})
+    assert "maker.example" in run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))])
+
+
+def test_sources_mode_values():
+    m = gw.compat.sources_mode
+    assert [m(True), m(False), m("on"), m("off"), m("always"), m("never"), m(None), m("weird")] == [
+        "auto", "never", "always", "never", "always", "never", "auto", "auto"]
+
+
+def test_never_hides_the_sources():
+    ctx = setup({"show_sources": "never", "verify": True})
+    out = run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))])
+    assert "maker.example" not in out and "✓" in out

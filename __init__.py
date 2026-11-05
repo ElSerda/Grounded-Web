@@ -15,7 +15,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Optional
 
-from . import footer, verify
+from . import compat, footer, verify
 
 # Page text is kept in memory per session, so an answer can rely on a page opened in an
 # earlier turn. Bounded: oldest pages, then oldest sessions, are dropped first. (Hermes's
@@ -27,6 +27,7 @@ _lock = threading.Lock()
 _turns: dict[str, dict[str, Any]] = {}
 _sessions: "OrderedDict[str, OrderedDict[str, tuple[str, str]]]" = OrderedDict()  # url -> (title, text)
 _ctx = None
+_own_key = "grounded-web"
 
 
 def _setting(key: str, default):
@@ -124,6 +125,11 @@ def _append_footer(response_text: str = "", session_id: str = "", **_: Any) -> O
         known = dict(_sessions.get(session_id, {}))
     if turn is None or not response_text:
         return None  # no web tool this turn: nothing to report
+    mode = compat.sources_mode(_setting("show_sources", "auto"))
+    # Hermes keeps only the first plugin rewrite of a reply: leave it to another rewriter rather
+    # than hide its output, unless the user asked for this footer anyway (show_sources: always).
+    if mode == "auto" and compat.other_reply_rewriters(_own_key):
+        return None
     pages = [{"url": u, "content": c} for u, (_, c) in known.items()]
     titles = {u: t for u, (t, _) in known.items()}
     # No page opened in this session: check against this turn's search snippets, and say so.
@@ -134,15 +140,16 @@ def _append_footer(response_text: str = "", session_id: str = "", **_: Any) -> O
     report = verify.check(response_text, pages) if pages else None
     earlier = [u for u in (report.used if report and basis == "pages" else []) if u not in turn["opened"]]
     lang = footer.language_of(response_text, _setting("language", "auto"))
-    text = footer.build(turn["opened"], turn["searched"], report, lang, _setting("show_sources", True), basis, earlier,
+    text = footer.build(turn["opened"], turn["searched"], report, lang, mode != "never", basis, earlier,
                         titles=titles, show_check=bool(_setting("verify", False)))
     # Keep the answer byte for byte: Hermes then prints only the added footer after a streamed reply.
     return f"{response_text}\n\n{text}" if text else None
 
 
 def register(ctx) -> None:
-    global _ctx
+    global _ctx, _own_key
     _ctx = ctx
+    _own_key = getattr(ctx, "plugin_id", None) or _own_key
     ctx.register_hook("pre_llm_call", _start_turn)
     ctx.register_hook("post_tool_call", _record_tool)
     ctx.register_hook("transform_llm_output", _append_footer)

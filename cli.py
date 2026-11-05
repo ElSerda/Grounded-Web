@@ -16,7 +16,7 @@ import importlib.util
 import subprocess
 import sys
 
-from . import extract
+from . import compat, extract
 
 CRAWL4AI_REQUIREMENT = "crawl4ai>=0.9.5,<0.10"
 TEST_PAGE = "https://www.iana.org/help/example-domains"
@@ -137,6 +137,11 @@ def print_state(s: dict, title: str = "grounded-web status") -> None:
         (ok if s["browser"] else error)("Headless Chromium  " + ("installed" if s["browser"] else "missing: run setup again"))
     else:
         warn("Crawl4AI           not installed (pages are read with trafilatura only)")
+    others = compat.other_reply_rewriters("grounded-web")
+    if others:
+        warn(f"Reply rewriters    {', '.join(others)} also rewrite replies, and Hermes keeps only one rewrite.")
+        info("grounded-web leaves the reply to them (show_sources: auto). Set it to `always` to show its")
+        info("footer anyway, or turn the other plugin off: `hermes plugins disable <name>`.")
 
 
 # ---------------------------------------------------------------- asking

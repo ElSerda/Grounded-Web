@@ -24,9 +24,11 @@ config_schema:
     label: Footer language
     description: "auto follows Hermes's display.language (English for languages other than en/fr); answer follows the language of the reply"
   show_sources:
-    type: bool
-    default: true
+    type: str
+    choices: [auto, always, never]
+    default: auto
     label: List opened pages
+    description: "auto steps aside when another enabled plugin also rewrites replies (Hermes keeps only one rewrite); always adds the footer; never turns it off"
   verify:
     type: bool
     default: false
