@@ -54,14 +54,29 @@ This is a limit of Hermes's `web_extract` that every extraction backend runs int
 
 **The window.** Hermes shows the model at most `web.extract_char_limit` characters of each page: 15,000 by default, whichever backend read it. On a longer page the model gets the first 75% and the last 25% of that window. The middle is saved to a file under `HERMES_HOME/cache/web`, with a note that `read_file` can page through it. Small models rarely do. So on a long document the answer is often in the part the model never sees.
 
-A real case, on Hermes 0.22.7 with Ministral 3 3B: asked for the RTX 5080's specs, the model opened NVIDIA's Blackwell white paper. The first 11,000 characters describe the GB202 chip of the RTX 5090; the RTX 5080 table is in an appendix, 60,000 characters further. The model saw only RTX 5090 figures and gave them as the RTX 5080's.
+A real case, on Hermes 0.22.7 with Ministral 3 3B in LM Studio. The question, asked in French: "According to https://hermes-agent.nousresearch.com/docs/user-guide/configuration, what does Hermes's `web.keyless_rescue` setting do, and what is its default?" That page is 255,000 characters long; the setting is explained 215,000 characters in. With `focus` turned off, the model saw the start and the end of the page and answered (translated):
+
+```
+The setting web.keyless_rescue is not explicitly mentioned in the Hermes Agent documentation [...]
+Default value not found explicitly.
+```
+
+With `focus` on (the default), same model, same page, same question:
+
+```
+web.keyless_rescue active when true: on a failed search or extract call, the single request retries
+using the keyless free-tier backend (round-robin fallback across Exa/Parallel/Firecrawl/Keenable).
+Default value: true.
+```
+
+That is what the documentation says.
 
 **Several URLs in one call.** Each page gets its own window, but they all land in one tool result. Above a share of the context window (15%, about 19,700 characters with a 32K context), Hermes replaces a whole tool result with a 1,500-character preview, and the model is left with almost nothing.
 
 **What grounded-web does about it:**
 
-- **One URL per call.** When the model asks `web_extract` for several URLs, grounded-web reads only the first one, the model's first choice (Hermes's `pre_tool_call` hook rewrites the call). The result then lists the URLs left out (`grounded_web_note`, through the `transform_tool_result` hook), and the model opens the ones it still needs in their own calls. Sending the whole call back with an error was tried first: it cost a round trip, and Ministral 3 3B then twice opened its second choice, a PDF, and never the product page it had ranked first. Setting: `one_url_per_call`.
-- **Relevant passages first.** grounded-web knows the question: the user's message and the model's search queries. On a page longer than the window, it moves the passages that mention the question's terms to the top. Rare terms weigh more than terms found all over the page, tables of contents are skipped, and a table split by a page break stays whole. A note tells the model this was done, and the rest of the page follows in its original order. Nothing is removed. In the case above, the full RTX 5080 table moves into the window. Setting: `focus`.
+- **One URL per call.** When the model asks `web_extract` for several URLs, grounded-web reads only the first one, the model's first choice (Hermes's `pre_tool_call` hook rewrites the call). The result then lists the URLs left out (`grounded_web_note`, through the `transform_tool_result` hook), and the model opens the ones it still needs in their own calls. Sending the whole call back with an error was tried first: it cost a round trip, and a small model (Ministral 3 3B) then twice opened its second choice and never the page it had ranked first. Setting: `one_url_per_call`.
+- **Relevant passages first.** grounded-web knows the question: the user's message and the model's search queries. On a page longer than the window, it moves the passages that mention the question's terms to the top. Rare terms weigh more than terms found all over the page, tables of contents are skipped, and a table split by a page break stays whole. A note tells the model this was done, and the rest of the page follows in its original order. Nothing is removed. Pages are cut into passages of about 600 characters where they have no paragraphs, as the text of an HTML page often does. In the case above, the `keyless_rescue` passage moves from 215,000 characters in to the top of the window. Setting: `focus`.
 - Pages are read up to 400,000 characters and handed to Hermes cut at 30,000 characters, after this reordering.
 
 **What you can do:** with a model that has room, raise the window, for example `hermes config set web.extract_char_limit 30000` (two pages then take about 16,000 tokens). Keep the default with a small context.

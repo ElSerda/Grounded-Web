@@ -27,8 +27,8 @@ def extract_result(*pages):
     return json.dumps({"results": [dict(p) for p in pages]})
 
 
-PAGE = {"url": "https://maker.example/gpu", "content": "Total Graphics Power: 360 W. Memory: 16 GB GDDR7."}
-REVIEW = {"url": "https://review.example/gpu", "content": "Boost clock 2.62 GHz, L2 cache 64 MB."}
+PAGE = {"url": "https://portal.example/cloud", "content": "Plus plan: $20/month. Cloud agent: 4 GB RAM, 25 GB disk."}
+REVIEW = {"url": "https://guide.example/plans", "content": "Super plan: $100/month, 100 GB disk, median latency 250 ms."}
 
 
 def run_turn(ctx, answer, tools, session="s1"):
@@ -49,28 +49,28 @@ def setup(settings=None):
 
 def test_footer_lists_the_opened_pages_with_titles():
     ctx = setup()
-    page = dict(PAGE, title="GPU X | Maker")
-    answer = "La carte consomme 360 W et coûte 999 $."
+    page = dict(PAGE, title="Cloud plans | Portal")
+    answer = "La formule Plus coûte 20 $ et l'agent a 25 Go de disque."
     out = run_turn(ctx, answer, [("web_search", "{}"), ("web_extract", extract_result(page))])
-    assert out == answer + "\n\nSources (pages ouvertes) :\n- GPU X | Maker: https://maker.example/gpu"
+    assert out == answer + "\n\nSources (pages ouvertes) :\n- Cloud plans | Portal: https://portal.example/cloud"
 
 
 def test_english_answer_gets_english_footer():
     ctx = setup()
-    out = run_turn(ctx, "The card draws 360 W.", [("web_extract", extract_result(PAGE))])
-    assert out.endswith("Sources (opened pages):\n- https://maker.example/gpu")
+    out = run_turn(ctx, "The Plus plan costs $20.", [("web_extract", extract_result(PAGE))])
+    assert out.endswith("Sources (opened pages):\n- https://portal.example/cloud")
 
 
 def test_search_only_turn_says_so():
     ctx = setup()
-    out = run_turn(ctx, "La carte a 16 Go.", [("web_search", "{}")])
+    out = run_turn(ctx, "L'agent dispose de 4 Go de mémoire vive et de 25 Go de disque.", [("web_search", "{}")])
     assert out.endswith("Aucune page ouverte : réponse basée sur les extraits de recherche.")
 
 
 def test_failed_pages_are_not_listed():
     ctx = setup()
     failed = {"url": "https://blocked.example", "content": "", "error": "403"}
-    out = run_turn(ctx, "La carte a 16 Go.", [("web_extract", extract_result(failed))])
+    out = run_turn(ctx, "L'agent dispose de 4 Go de mémoire vive et de 25 Go de disque.", [("web_extract", extract_result(failed))])
     assert "blocked.example" not in out
     assert out.endswith("Aucune page n'a pu être lue.")
 
@@ -78,11 +78,11 @@ def test_failed_pages_are_not_listed():
 def test_bot_wall_returned_as_content_is_not_a_source():
     # Hermes's keyless rescue can bring a bot wall back as page content.
     ctx = setup()
-    wall = {"url": "https://wall.example/specs", "title": "Specs | Wall",
-            "content": "# Specs\n\n# Automated bot check in progress\n\nDrag the handle to the target"}
-    out = run_turn(ctx, "The card draws 360 W.", [("web_extract", extract_result(wall, PAGE))])
+    wall = {"url": "https://wall.example/plans", "title": "Plans | Wall",
+            "content": "# Plans\n\n# Automated bot check in progress\n\nDrag the handle to the target"}
+    out = run_turn(ctx, "The Plus plan costs $20.", [("web_extract", extract_result(wall, PAGE))])
     assert "wall.example" not in out
-    assert "maker.example" in out
+    assert "portal.example" in out
 
 
 def test_turn_without_web_tools_is_left_alone():
@@ -92,20 +92,20 @@ def test_turn_without_web_tools_is_left_alone():
 
 def test_earlier_page_is_listed_only_when_the_answer_uses_it():
     ctx = setup()
-    run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))])
-    out = run_turn(ctx, "Boost à 2,62 GHz et 360 W.", [("web_extract", extract_result(REVIEW))])
-    assert "Sources (pages ouvertes) :\n- https://review.example/gpu" in out
-    assert out.endswith("Aussi utilisées, ouvertes plus tôt dans la conversation :\n- https://maker.example/gpu")
-    out = run_turn(ctx, "Boost à 2,62 GHz.", [("web_extract", extract_result(REVIEW))])
-    assert "maker.example" not in out
+    run_turn(ctx, "La formule Plus coûte 20 $.", [("web_extract", extract_result(PAGE))])
+    out = run_turn(ctx, "La Super coûte 100 $ et la Plus 20 $.", [("web_extract", extract_result(REVIEW))])
+    assert "Sources (pages ouvertes) :\n- https://guide.example/plans" in out
+    assert out.endswith("Aussi utilisées, ouvertes plus tôt dans la conversation :\n- https://portal.example/cloud")
+    out = run_turn(ctx, "La Super coûte 100 $.", [("web_extract", extract_result(REVIEW))])
+    assert "portal.example" not in out
 
 
 def test_follow_up_without_web_tools_lists_the_earlier_page_it_uses():
-    # Found with Nemotron: "and how much power does it draw?" answered from the page opened before.
+    # Found in testing: "and how much disk does it get?" answered from the page opened before.
     ctx = setup()
-    run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))])
-    out = run_turn(ctx, "La carte consomme 360 W et il faut une alimentation de 850 W.", [])
-    assert out.endswith("Aussi utilisées, ouvertes plus tôt dans la conversation :\n- https://maker.example/gpu")
+    run_turn(ctx, "La formule Plus coûte 20 $.", [("web_extract", extract_result(PAGE))])
+    out = run_turn(ctx, "La formule Plus coûte 20 $ et donne 25 Go de disque.", [])
+    assert out.endswith("Aussi utilisées, ouvertes plus tôt dans la conversation :\n- https://portal.example/cloud")
     assert "Sources (pages ouvertes)" not in out
     assert run_turn(ctx, "Avec plaisir.", []) is None  # no value from the page: nothing added
 
@@ -119,13 +119,13 @@ def test_resumed_conversation_gets_its_earlier_pages_from_the_history():
             {"id": "c2", "type": "function", "function": {"name": "web_search", "arguments": "{}"}}]},
         {"role": "tool", "tool_call_id": "c1", "content": "<untrusted_tool_result>\n" + extract_result(PAGE) + "\n</untrusted_tool_result>"},
         {"role": "tool", "tool_call_id": "c2", "content": extract_result(REVIEW)},  # not web_extract: ignored
-        {"role": "assistant", "content": "It draws 360 W."},
+        {"role": "assistant", "content": "It costs $20."},
     ]
     h = ctx.hooks
-    h["pre_llm_call"](session_id="s9", user_message="and the power?", conversation_history=history)
-    out = h["transform_llm_output"](response_text="La carte consomme 360 W et le boost est à 2,62 GHz.", session_id="s9", model="m", platform="cli")
-    assert out.endswith("Aussi utilisées, ouvertes plus tôt dans la conversation :\n- https://maker.example/gpu")
-    assert "review.example" not in out
+    h["pre_llm_call"](session_id="s9", user_message="and the disk?", conversation_history=history)
+    out = h["transform_llm_output"](response_text="La formule Plus coûte 20 $ et la latence est de 250 ms.", session_id="s9", model="m", platform="cli")
+    assert out.endswith("Aussi utilisées, ouvertes plus tôt dans la conversation :\n- https://portal.example/cloud")
+    assert "guide.example" not in out
 
 
 def test_reminder_asks_the_model_not_to_write_the_list():
@@ -135,9 +135,9 @@ def test_reminder_asks_the_model_not_to_write_the_list():
 
 def test_sessions_do_not_share_pages():
     ctx = setup()
-    run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))], session="a")
-    out = run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(REVIEW))], session="b")
-    assert "maker.example" not in out
+    run_turn(ctx, "La formule Plus coûte 20 $.", [("web_extract", extract_result(PAGE))], session="a")
+    out = run_turn(ctx, "La formule Plus coûte 20 $.", [("web_extract", extract_result(REVIEW))], session="b")
+    assert "portal.example" not in out
 
 
 def test_reminder_is_added_to_each_turn_and_can_be_turned_off():
@@ -149,16 +149,16 @@ def test_reminder_is_added_to_each_turn_and_can_be_turned_off():
 
 def test_footer_can_follow_the_answer_language():
     ctx = setup({"language": "answer"})
-    out = run_turn(ctx, "The card draws 360 W.", [("web_extract", extract_result(PAGE))])
+    out = run_turn(ctx, "The Plus plan costs $20.", [("web_extract", extract_result(PAGE))])
     assert "Sources (opened pages):" in out
 
 
 def test_steps_aside_for_another_reply_rewriter(monkeypatch):
     monkeypatch.setattr(gw.compat, "other_reply_rewriters", lambda own, has_plugin: ["other-footer"])
     ctx = setup()
-    assert run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))]) is None
+    assert run_turn(ctx, "La formule Plus coûte 20 $.", [("web_extract", extract_result(PAGE))]) is None
     ctx = setup({"show_sources": "always"})
-    assert "maker.example" in run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))])
+    assert "portal.example" in run_turn(ctx, "La formule Plus coûte 20 $.", [("web_extract", extract_result(PAGE))])
 
 
 def test_sources_mode_values():
@@ -169,14 +169,14 @@ def test_sources_mode_values():
 
 def test_never_turns_the_footer_off():
     ctx = setup({"show_sources": "never"})
-    assert run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))]) is None
+    assert run_turn(ctx, "La formule Plus coûte 20 $.", [("web_extract", extract_result(PAGE))]) is None
 
 
 def test_model_is_told_the_footer_under_its_earlier_answers_is_not_its_own():
     ctx = setup()
     history = [{"role": "user", "content": "specs?"},
-               {"role": "assistant", "content": "It draws 360 W.\n\nSources (opened pages):\n- https://maker.example/gpu"}]
-    context = ctx.hooks["pre_llm_call"](session_id="s1", user_message="and the PSU?", conversation_history=history)
+               {"role": "assistant", "content": "It costs $20.\n\nSources (opened pages):\n- https://portal.example/cloud"}]
+    context = ctx.hooks["pre_llm_call"](session_id="s1", user_message="and the disk?", conversation_history=history)
     assert 'were added by grounded-web, not written by you' in context
     assert '"Sources (opened pages):"' in context
     plain = ctx.hooks["pre_llm_call"](session_id="s2", user_message="hi", conversation_history=[])

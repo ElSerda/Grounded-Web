@@ -138,7 +138,7 @@ def extract_facts(answer: str) -> list[Fact]:
     def add(span, fact):
         if any(a < span[1] and span[0] < b for a, b in taken):
             return
-        # Part of a product code such as GB203-400-A1 or 12V-2x6: a name, not a value.
+        # Part of a product code such as NP-400-A1 or 24V-3x8: a name, not a value.
         if re.match(r"-\w", text[span[1]:span[1] + 2]) or re.search(r"\w-$", text[max(0, span[0] - 2):span[0]]):
             taken.append(span)
             return

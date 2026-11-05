@@ -79,7 +79,7 @@ REMINDER = (
     "The pages you open are listed under your answer; do not write that list yourself."
 )
 # Hermes keeps the footer in the conversation, so a model sees it under its own earlier answers and
-# may copy it into an answer that opened nothing (seen with Nemotron 3 Ultra). Said only then.
+# may copy it into an answer that opened nothing (seen in testing with a large cloud model). Said only then.
 FOOTER_NOTE = (
     "[grounded-web] The source lists under your earlier answers (\"{heading}\") were added by "
     "grounded-web, not written by you. Do not write one: grounded-web adds it when pages were used."

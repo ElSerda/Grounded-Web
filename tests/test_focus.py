@@ -12,19 +12,19 @@ gw = load()
 import grounded_web.extract as ex  # noqa: E402
 import grounded_web.focus as fo  # noqa: E402
 
-FILLER = "The architecture brings new shader features and improved efficiency for many workloads."
+FILLER = "Every Hermes plan includes the hosted tools, the model catalog and the Portal dashboard."
 
 
 def long_page(table_at: int = 120) -> str:
-    """A white-paper-like page: a table of contents, the flagship first, the asked product deep inside,
-    its spec table split by a running page header."""
-    blocks = ["Blackwell white paper", "Contents\nIntroduction......3\nGB202......14\nGB203......49"]
-    blocks += [f"Section {i}. {FILLER} The flagship X90 leads the lineup." for i in range(table_at)]
+    """A guide-like document: a table of contents, the free plan first, the asked plan deep inside,
+    its table split by a running page header."""
+    blocks = ["Nous Portal plans guide", "Contents\nIntroduction......3\nFree......14\nUltra......49"]
+    blocks += [f"Section {i}. {FILLER} The Free plan comes first." for i in range(table_at)]
     blocks += [
-        "The first product using the GB203 GPU is the X80. Its specs are compared below.",
-        "|Card|X70|X80|\n|---|---|---|\n|CUDA Cores|9728|10752|\n|Boost Clock (MHz)|2505|2617|",
-        "APPENDIX B: GB203",
-        "|Memory|16 GB GDDR6X|16 GB GDDR7|\n|Memory Bandwidth|716.8 GB/sec|960 GB/sec|",
+        "The Ultra plan is the largest. Its cloud agent is compared below.",
+        "|Plan|Super|Ultra|\n|---|---|---|\n|Price|$100/month|$200/month|\n|RAM|4 GB|8 GB|",
+        "APPENDIX B: Ultra",
+        "|Disk|100 GB|100 GB|\n|Monthly credits|$110|$220|",
     ]
     blocks += [f"Closing {i}. {FILLER}" for i in range(40)]
     return "\n\n".join(blocks)
@@ -39,42 +39,42 @@ def model_view(text: str, window: int = 15_000) -> str:
 
 
 def test_terms_put_numbers_first_and_drop_stop_words_and_operators():
-    terms = fo.terms_of("trouve moi les specifications techniques de la RTX 5080",
-                        "RTX 5080 specs site:nvidia.com filetype:pdf")
-    assert terms[0] == "5080"
-    assert "rtx" in terms and "specifications" in terms
-    assert not {"trouve", "moi", "les", "site", "nvidia.com", "pdf", "filetype"} & set(terms)
+    terms = fo.terms_of("trouve moi les formules de Nous Portal pour Hermes 0.22.7",
+                        "Nous Portal plans site:nousresearch.com filetype:pdf")
+    assert terms[0] == "0.22.7"
+    assert "portal" in terms and "formules" in terms
+    assert not {"trouve", "moi", "les", "site", "nousresearch.com", "pdf", "filetype"} & set(terms)
 
 
 def test_short_page_is_unchanged():
-    text = "Short page about the X80.\n\nIt has 10752 cores."
-    assert fo.arrange(text, ["x80"], 15_000) == text
+    text = "Short page about the Ultra plan.\n\nIt has 8 GB of RAM."
+    assert fo.arrange(text, ["ultra"], 15_000) == text
 
 
 def test_long_page_puts_the_asked_product_where_the_model_sees_it():
     text = long_page()
-    assert "10752" not in model_view(text)  # what went wrong on the homelab
-    out = fo.arrange(text, fo.terms_of("specs of the X80"), 15_000)
+    assert "$200/month" not in model_view(text)  # the asked plan is in the hidden middle
+    out = fo.arrange(text, fo.terms_of("what does the Ultra plan include?"), 15_000)
     seen = model_view(out)
-    assert "|CUDA Cores|9728|10752|" in seen
-    assert "|Memory Bandwidth|716.8 GB/sec|960 GB/sec|" in seen  # the table's second half, past the page header
+    assert "|Price|$100/month|$200/month|" in seen
+    assert "|Monthly credits|$110|$220|" in seen  # the table's second half, past the page header
     assert "[grounded-web: this page is long." in seen
 
 
 def test_nothing_is_removed():
     text = long_page()
-    out = fo.arrange(text, ["x80"], 15_000)
+    out = fo.arrange(text, ["ultra"], 15_000)
     blocks = [b for b in text.split("\n\n")]
     assert all(b in out for b in blocks)
 
 
 def test_table_of_contents_and_common_words_do_not_move():
     text = long_page()
-    out = fo.arrange(text, ["x80", "architecture"], 15_000)
+    out = fo.arrange(text, ["ultra", "hermes"], 15_000)
     note = out.index("[grounded-web: this page is long.")
     first_part = out[note: out.index("[grounded-web: rest of the page")]
     assert "Introduction......3" not in first_part
-    assert "Section 5." not in first_part  # "architecture" is on every filler line: it weighs nothing
+    assert "Section 5." not in first_part  # "hermes" is on every filler line: it weighs nothing
 
 
 def test_page_without_the_terms_is_unchanged():
@@ -83,8 +83,8 @@ def test_page_without_the_terms_is_unchanged():
 
 
 def test_expected_url_matches_despite_slash_and_case():
-    fo.expect("https://WWW.Example.com/specs/", ["x80"], 9000)
-    assert fo.take("https://www.example.com/specs") == (["x80"], 9000)
+    fo.expect("https://WWW.Example.com/plans/", ["ultra"], 9000)
+    assert fo.take("https://www.example.com/plans") == (["ultra"], 9000)
 
 
 # ---------------------------------------------------------------- hooks and provider
@@ -141,22 +141,22 @@ def test_the_guard_can_be_turned_off():
 def test_question_and_search_queries_reach_the_reader():
     ctx = setup()
     h = ctx.hooks
-    h["pre_llm_call"](session_id="s1", user_message="Quelles sont les specs de la X80 ?")
-    h["post_tool_call"](tool_name="web_search", args={"query": "X80 GB203 specifications"}, result="{}", session_id="s1")
-    h["pre_tool_call"](tool_name="web_extract", args={"urls": ["https://maker.example/whitepaper.pdf"], "char_limit": 12000},
+    h["pre_llm_call"](session_id="s1", user_message="Que comprend la formule Ultra de Nous Portal ?")
+    h["post_tool_call"](tool_name="web_search", args={"query": "Nous Portal Ultra plan cloud agent"}, result="{}", session_id="s1")
+    h["pre_tool_call"](tool_name="web_extract", args={"urls": ["https://portal.example/plans-guide.pdf"], "char_limit": 12000},
                        session_id="s1")
-    terms, window = fo.take("https://maker.example/whitepaper.pdf")
+    terms, window = fo.take("https://portal.example/plans-guide.pdf")
     assert window == 12000
-    assert {"x80", "gb203", "specifications"} <= set(terms)
+    assert {"ultra", "portal", "agent"} <= set(terms)
 
 
 def test_the_page_handed_back_has_the_relevant_part_first():
     # What provider.extract() does with each page (the provider needs Hermes's base class).
-    url = "https://maker.example/whitepaper.pdf"
-    fo.expect(url, ["x80"], 15_000)
-    page = ex.Page(url, "White paper", long_page(), engine="anydoc")
+    url = "https://portal.example/plans-guide.pdf"
+    fo.expect(url, ["ultra"], 15_000)
+    page = ex.Page(url, "Plans guide", long_page(), engine="anydoc")
     result = page.as_result(*(fo.take(url) or (None, 0)))
-    assert "|CUDA Cores|9728|10752|" in model_view(result["content"])
+    assert "|Price|$100/month|$200/month|" in model_view(result["content"])
     assert len(result["content"]) <= ex.MAX_CONTENT_CHARS
     assert result["raw_content"] == result["content"]
     json.dumps(result)

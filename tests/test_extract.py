@@ -12,38 +12,38 @@ import importlib  # noqa: E402
 load()
 ex = importlib.import_module("grounded_web.extract")
 
-MAIN = "Game Changer\nGear up with the GeForce GPU X and AI-powered DLSS. " * 10
+MAIN = "Hermes Cloud\nAn always-on Hermes Agent, hosted for you, included in every paid plan. " * 10
 BROWSER = """
-# GPU X
-[Shop now](https://shop.example/gpu-x)
-## Specs
-| Spec | Value |
-| --- | --- |
-| CUDA Cores | 10752 |
-| Boost Clock (GHz) | 2.62 |
-| Maximum Digital Resolution | 4K at 480Hz or 8K at 165Hz with DSC |
-| Total Graphics Power (W) | 360 |
+# Hermes Cloud
+[Start now](https://portal.example/start)
+## Plans
+| Plan | Price | Cloud agent |
+| --- | --- | --- |
+| Plus | $20 / month | 4 GB RAM, 25 GB disk |
+| Super | $100 / month | 4 GB RAM, 100 GB disk |
+| Ultra | $200 / month | 8 GB RAM, 100 GB disk |
 ## Footer
-[Privacy](https://maker.example/privacy) © 2026
+[Privacy](https://portal.example/privacy) © 2026
 """
 
 
 def test_complement_adds_only_rows_with_new_values():
     extra = ex.complement(MAIN, BROWSER)
-    assert "## Specs" in extra
-    assert "| CUDA Cores | 10752 |" in extra
-    assert "8K at 165Hz" in extra
-    assert "Shop now" not in extra and "Privacy" not in extra
+    assert "## Plans" in extra
+    assert "| Plus | $20 / month | 4 GB RAM, 25 GB disk |" in extra
+    assert "8 GB RAM" in extra
+    assert "Start now" not in extra and "Privacy" not in extra
     assert "http" not in extra
 
 
 def test_complement_skips_values_already_in_main_text():
-    assert "10752" not in ex.complement(MAIN + " It has 10752 cores.", BROWSER)
+    extra = ex.complement(MAIN + " Plus costs $20 / month with 4 GB RAM, 25 GB disk.", BROWSER)
+    assert "| Plus |" not in extra and "| Ultra |" in extra
 
 
 def test_merge_uses_browser_text_when_main_text_is_empty():
     content, engine = ex.merge("", BROWSER)
-    assert engine == "crawl4ai" and "8K at 165Hz" in content and "](" not in content
+    assert engine == "crawl4ai" and "8 GB RAM" in content and "](" not in content
 
 
 def test_merge_appends_complement():
@@ -69,7 +69,7 @@ def test_error_words_in_a_200_page_are_content():
 
 
 def test_a_short_table_with_the_number_404_is_content():
-    # Found with Nemotron: an air travel CSV (404 passengers in September 1958) lost its footer line.
+    # Found in testing: an air travel CSV (404 passengers in September 1958) lost its footer line.
     csv = ("| Month | 1958 | 1959 |\n| --- | --- | --- |\n| AUG | 505 | 559 |\n"
            "| SEP | 404 | 463 |\n| OCT | 410 | 407 |")
     assert ex.looks_blocked("airtravel.csv", csv) == ""
@@ -81,17 +81,17 @@ def test_long_pages_are_never_called_blocked():
 
 
 def test_normal_short_page_is_kept():
-    assert ex.looks_blocked("llama.cpp 0.8.0", "Release notes: faster CUDA kernels.") == ""
+    assert ex.looks_blocked("Hermes Agent v0.22.7", "Release notes: faster web tools.") == ""
 
 
 def test_bot_wall_is_caught_even_on_a_long_page():
     wall = "Automated bot check in progress\nThis should only take a few seconds.\nDrag the handle to the target\n"
-    assert ex.looks_blocked("TechPowerUp", wall + "filler text " * 300)
+    assert ex.looks_blocked("Specs database", wall + "filler text " * 300)
 
 
 def test_unlabeled_number_rows_are_not_added():
     md = "## Benchmarks\n117.5 1%\n240 fps (37%)\n| Memory Speed | 30000 effective |"
-    extra = ex.complement("Some text about the card.", md)
+    extra = ex.complement("Some text about the plans.", md)
     assert "117.5" not in extra and "240 fps" not in extra
     assert "Memory Speed" in extra
 
@@ -128,5 +128,5 @@ def test_challenge_phrases_still_count_on_long_pages_but_plain_words_do_not():
 
 
 def test_a_long_page_about_captchas_keeps_its_title():
-    assert ex.looks_blocked("CAPTCHA - Wikipedia", "A CAPTCHA is a type of challenge-response test. " * 60) == ""
+    assert ex.looks_blocked("CAPTCHA - Encyclopedia", "A CAPTCHA is a type of challenge-response test. " * 60) == ""
     assert ex.looks_blocked("Access Denied", "You don't have permission to access this server.")  # short: a wall

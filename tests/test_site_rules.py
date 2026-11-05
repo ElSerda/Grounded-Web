@@ -83,8 +83,8 @@ def test_an_opted_out_page_is_an_error(monkeypatch):
 def test_llms_txt_is_parsed_and_html_is_not_taken_for_one():
     links = sr.parse_llms_txt(LLMS, "https://docs.example")
     assert links == {"https://docs.example/install.md", "https://docs.example/specs.md"}
-    spa_home = '<!DOCTYPE html><html lang="fr"><head><title>KissBot</title></head><body><div id="app"></div>'
-    assert sr.parse_llms_txt(spa_home, "https://kissbot.bzh") is None
+    spa_home = '<!DOCTYPE html><html lang="fr"><head><title>App</title></head><body><div id="app"></div>'
+    assert sr.parse_llms_txt(spa_home, "https://app.example") is None
     assert sr.parse_llms_txt("Just some text", "https://x.example") is None
 
 
@@ -106,10 +106,10 @@ def test_the_markdown_version_is_read_instead_of_the_html():
 
 
 def test_llms_txt_is_fetched_once_per_site_and_a_fake_one_is_ignored():
-    client = FakeClient({"https://kissbot.bzh/llms.txt": Response(200, "<!DOCTYPE html><div id='app'>", "text/html")})
-    assert asyncio.run(sr.llms_index(client, "https://kissbot.bzh/")) is None
-    assert asyncio.run(sr.llms_index(client, "https://kissbot.bzh/about")) is None
-    assert client.calls == ["https://kissbot.bzh/llms.txt"]
+    client = FakeClient({"https://app.example/llms.txt": Response(200, "<!DOCTYPE html><div id='app'>", "text/html")})
+    assert asyncio.run(sr.llms_index(client, "https://app.example/")) is None
+    assert asyncio.run(sr.llms_index(client, "https://app.example/about")) is None
+    assert client.calls == ["https://app.example/llms.txt"]
 
 
 def test_llms_txt_can_be_turned_off():

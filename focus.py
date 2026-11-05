@@ -2,8 +2,8 @@
 
 Hermes shows the model at most `web.extract_char_limit` characters of each page (15,000 by default):
 the first 75% and the last 25%, the middle goes to a file. In a long document the passage that
-answers the question is often in that middle (the RTX 5080 part of a Blackwell white paper that
-opens with the RTX 5090). grounded-web knows the question (the user's message and the model's
+answers the question is often in that middle (the keyless_rescue setting, 215,000 characters into
+Hermes's 255,000-character configuration docs). grounded-web knows the question (the user's message and the model's
 search queries), so it moves the passages that mention its terms to the top, with a note, and
 keeps the rest after them in the original order. Nothing is removed; short pages are unchanged.
 """
