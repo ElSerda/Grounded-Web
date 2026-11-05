@@ -111,22 +111,29 @@ def setup(settings=None):
     return ctx
 
 
-def test_several_urls_in_one_call_are_sent_back_with_what_to_do():
+def test_several_urls_read_the_first_and_the_result_lists_the_others():
     ctx = setup()
-    out = ctx.hooks["pre_tool_call"](tool_name="web_extract", session_id="s1",
-                                     args={"urls": ["https://a.example/1", "https://b.example/2"]})
-    assert out["action"] == "block"
-    assert 'urls=["https://a.example/1"]' in out["message"] and "own call" in out["message"]
+    urls = ["https://a.example/1", "https://b.example/2", "https://c.example/3"]
+    out = ctx.hooks["pre_tool_call"](tool_name="web_extract", session_id="s1", tool_call_id="c1", args={"urls": urls})
+    assert out == {"action": "modify", "args": {"urls": ["https://a.example/1"]}}
+    result = json.dumps({"results": [{"url": urls[0], "content": "page"}]})
+    noted = json.loads(ctx.hooks["transform_tool_result"](tool_name="web_extract", result=result,
+                                                          session_id="s1", tool_call_id="c1"))
+    assert noted["results"][0]["url"] == urls[0]
+    assert "https://b.example/2, https://c.example/3" in noted["grounded_web_note"]
+    # once only, and only for that call
+    assert ctx.hooks["transform_tool_result"](tool_name="web_extract", result=result, session_id="s1", tool_call_id="c1") is None
 
 
 def test_one_url_passes_and_other_tools_are_untouched():
     ctx = setup()
     assert ctx.hooks["pre_tool_call"](tool_name="web_extract", args={"urls": ["https://a.example/1"]}, session_id="s1") is None
     assert ctx.hooks["pre_tool_call"](tool_name="terminal", args={"urls": ["a", "b"]}, session_id="s1") is None
+    assert ctx.hooks["transform_tool_result"](tool_name="web_extract", result="{}", session_id="s1", tool_call_id="x") is None
 
 
 def test_the_guard_can_be_turned_off():
-    ctx = setup({"one_url_per_call": False})
+    ctx = setup({"one_url_per_call": False, "focus": False})
     assert ctx.hooks["pre_tool_call"](tool_name="web_extract", args={"urls": ["https://a.example/1", "https://b.example/2"]},
                                       session_id="s1") is None
 

@@ -11,6 +11,7 @@ provides_hooks:
   - pre_llm_call
   - pre_tool_call
   - post_tool_call
+  - transform_tool_result
   - transform_llm_output
 provides_web_providers:
   - grounded-web
@@ -36,7 +37,7 @@ config_schema:
     type: bool
     default: true
     label: One URL per web_extract call
-    description: "Sends back a web_extract call that asks for several URLs, with a message to call them one by one: several long pages in one result can exceed a small model's context"
+    description: "A web_extract call that asks for several URLs reads only the first, and its result lists the others: several long pages in one result can exceed a small model's context"
   focus:
     type: bool
     default: true

@@ -2,9 +2,10 @@
 
 Hooks only, no extra model call:
   pre_llm_call          starts a fresh record for the turn and adds a one-sentence reminder
-  pre_tool_call         sends back a web_extract call that asks for several URLs at once (one URL
-                        per call keeps each page within a small model's context), and notes the
-                        question so a long page has its relevant passages first (focus.py)
+  pre_tool_call         keeps only the first URL of a web_extract call that asks for several (one
+                        URL per call keeps each page within a small model's context), and notes
+                        the question so a long page has its relevant passages first (focus.py)
+  transform_tool_result adds to that result the URLs that were left out, so the model can open them
   post_tool_call        keeps the text of every page web_extract returned, for the whole session
   transform_llm_output  appends the opened pages to the answer (append-only,
                         so a streamed answer is not reprinted)
@@ -107,14 +108,28 @@ def _urls(args: Any) -> list[str]:
     return [str(u) for u in urls or [] if u]
 
 
-def _guard_tool(tool_name: str = "", args: Any = None, session_id: str = "", **_: Any) -> Optional[dict]:
+_held: "OrderedDict[str, list[str]]" = OrderedDict()  # tool call -> URLs left out of it
+
+
+def _call_key(session_id: str, tool_call_id: Any) -> str:
+    return f"{session_id}\x00{tool_call_id or ''}"
+
+
+def _guard_tool(tool_name: str = "", args: Any = None, session_id: str = "", tool_call_id: Any = None,
+                **_: Any) -> Optional[dict]:
     if tool_name != "web_extract":
         return None
     urls = _urls(args)
+    directive = None
     if len(urls) > 1 and _setting("one_url_per_call", True):
-        return {"action": "block", "message": (
-            f"grounded-web: web_extract takes one URL per call, so each page fits in your context. "
-            f"Call web_extract with urls=[\"{urls[0]}\"] now, then each other URL in its own call.")}
+        # Read the model's first choice now; the result then says which URLs were left out.
+        # (Sending the whole call back cost a round trip, and a small model then often picked
+        # another URL than its first choice.)
+        with _lock:
+            _held[_call_key(session_id, tool_call_id)] = urls[1:]
+            while len(_held) > MAX_SESSIONS * 4:
+                _held.popitem(last=False)
+        directive = {"action": "modify", "args": {"urls": urls[:1]}}
     if urls and _setting("focus", True):
         with _lock:
             texts = list(_questions.get(session_id, []))
@@ -124,7 +139,28 @@ def _guard_tool(tool_name: str = "", args: Any = None, session_id: str = "", **_
         except (TypeError, ValueError):
             window = focus.hermes_window()
         focus.expect(urls[0], focus.terms_of(*texts), window)
-    return None
+    return directive
+
+
+def _note_held(tool_name: str = "", result: Any = None, session_id: str = "", tool_call_id: Any = None,
+               **_: Any) -> Optional[str]:
+    """Adds to a web_extract result the URLs that _guard_tool left out of the call."""
+    if tool_name != "web_extract":
+        return None
+    with _lock:
+        held = _held.pop(_call_key(session_id, tool_call_id), None)
+    if not held or not isinstance(result, str):
+        return None
+    note = ("grounded-web reads one URL per web_extract call, so each page fits in the context. "
+            "This call read only the first URL. Not opened: " + ", ".join(held))
+    try:
+        data = json.loads(result)
+    except ValueError:
+        return f"{result}\n\n[{note}]"
+    if not isinstance(data, dict):
+        return f"{result}\n\n[{note}]"
+    data["grounded_web_note"] = note
+    return json.dumps(data, ensure_ascii=False)
 
 
 def _record_tool(tool_name: str = "", result: Any = None, session_id: str = "", args: Any = None,
@@ -176,6 +212,7 @@ def register(ctx) -> None:
     ctx.register_hook("pre_llm_call", _start_turn)
     ctx.register_hook("pre_tool_call", _guard_tool)
     ctx.register_hook("post_tool_call", _record_tool)
+    ctx.register_hook("transform_tool_result", _note_held)
     ctx.register_hook("transform_llm_output", _append_footer)
     skills = Path(__file__).parent / "skills"
     if hasattr(ctx, "register_skill") and skills.is_dir():

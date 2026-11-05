@@ -59,7 +59,7 @@ A real case, on Hermes 0.22.7 with Ministral 3 3B: asked for the RTX 5080's spec
 
 **What grounded-web does about it:**
 
-- **One URL per call.** A `web_extract` call that asks for several URLs is sent back (Hermes's `pre_tool_call` hook), with a message telling the model to call again with the first URL, then each other one in its own call. Small models follow it. It costs one round trip, only when the model asks for several URLs at once. Setting: `one_url_per_call`.
+- **One URL per call.** When the model asks `web_extract` for several URLs, grounded-web reads only the first one, the model's first choice (Hermes's `pre_tool_call` hook rewrites the call). The result then lists the URLs left out (`grounded_web_note`, through the `transform_tool_result` hook), and the model opens the ones it still needs in their own calls. Sending the whole call back with an error was tried first: it cost a round trip, and Ministral 3 3B then twice opened its second choice, a PDF, and never the product page it had ranked first. Setting: `one_url_per_call`.
 - **Relevant passages first.** grounded-web knows the question: the user's message and the model's search queries. On a page longer than the window, it moves the passages that mention the question's terms to the top. Rare terms weigh more than terms found all over the page, tables of contents are skipped, and a table split by a page break stays whole. A note tells the model this was done, and the rest of the page follows in its original order. Nothing is removed. In the case above, the full RTX 5080 table moves into the window. Setting: `focus`.
 - Pages are read up to 400,000 characters and handed to Hermes cut at 30,000 characters, after this reordering.
 
@@ -124,14 +124,14 @@ Under Settings → Plugins in Hermes Desktop, or `plugins.entries.grounded-web.s
 | `language` | `auto` | Footer language: `auto` (Hermes's `display.language`; English for languages other than en/fr), `answer` (the reply's language), `en` or `fr` |
 | `show_sources` | `auto` | `auto`: list the opened pages, unless another plugin also rewrites replies (see below). `always`: list them anyway. `never`: no list |
 | `remind` | `true` | Add one sentence to each user message (about 50 tokens): search snippets are not sources, open the pages |
-| `one_url_per_call` | `true` | Send back a `web_extract` call that asks for several URLs, with a message to call them one by one |
+| `one_url_per_call` | `true` | A `web_extract` call that asks for several URLs reads only the first; the result lists the others |
 | `focus` | `true` | On a page longer than what Hermes shows the model, put the passages about the question first (nothing is removed) |
 
 Search and page reading are separate settings: grounded-web only reads pages. It works with any search backend.
 
 ## What it does, for review
 
-- **Hooks:** `pre_llm_call` (starts a record for the turn, notes the user's message for `focus` and, unless `remind` is off, appends the one-sentence reminder to the user message), `pre_tool_call` (only for `web_extract`: blocks a call with several URLs when `one_url_per_call` is on, and notes which question the page is read for), `post_tool_call` (keeps the text of `web_extract` results and the `web_search` query), `transform_llm_output` (appends the footer; the answer itself is not changed, so a streamed answer is not printed twice).
+- **Hooks:** `pre_llm_call` (starts a record for the turn, notes the user's message for `focus` and, unless `remind` is off, appends the one-sentence reminder to the user message), `pre_tool_call` (only for `web_extract`: keeps the first URL of a call that asks for several when `one_url_per_call` is on, and notes which question the page is read for), `transform_tool_result` (only for such a call: adds the URLs left out to its result), `post_tool_call` (keeps the text of `web_extract` results and the `web_search` query), `transform_llm_output` (appends the footer; the answer itself is not changed, so a streamed answer is not printed twice).
 - **Web provider:** `grounded-web`, extract only.
 - **CLI:** `hermes grounded-web status|setup|uninstall`.
 - **Skill:** `grounded-web:web-research`, read-only, loaded only if you auto-load it or call it.
@@ -150,6 +150,7 @@ Hermes runs every plugin's `transform_llm_output` hook but keeps only the first 
 - The footer says which pages the answer was built from. It does not check that each sentence of the answer matches them: that would take another model call per reply and still not be reliable.
 - An earlier page is matched on values with a unit, a price or a version; an answer that reuses only its prose is not linked to it.
 - Pages behind logins or strong bot protection cannot be read; they come back as errors.
+- Hermes keeps `web_extract` results for 20 minutes (`web.cache_ttl_minutes`), across sessions, and a cached page does not go through grounded-web again: within that time a page keeps the order `focus` gave it for the first question. Nothing is removed either way, and `web.cache_enabled: false` turns the cache off.
 - `focus` matches words, not meaning: a question worded differently from the page (a synonym, another language) may move nothing, and the page then reaches the model as before. The model can still page through the full text with `read_file`.
 
 ## Dependencies
