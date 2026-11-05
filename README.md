@@ -1,7 +1,5 @@
 # grounded-web
 
-[![CI](https://github.com/ElSerda/Grounded-Web/actions/workflows/ci.yml/badge.svg)](https://github.com/ElSerda/Grounded-Web/actions/workflows/ci.yml)
-
 A Hermes Agent plugin for web answers built from pages that were really read.
 
 - **Reads pages and PDFs on your machine** for `web_extract`: no API key, no extraction service.
@@ -134,14 +132,12 @@ Declared in `pyproject.toml`, installed by Hermes inside its own constraints:
 ## Development
 
 ```
-python -m venv .venv
-.venv/Scripts/python -m pip install -r pyproject.toml pytest   # Linux/macOS: .venv/bin/python
-.venv/Scripts/python -m pytest tests
-hermes plugins doctor . --ci              # loads it the way Hermes does
-hermes plugins validate . --install-deps  # the catalog CI check
+python tools/check.py
 ```
 
-The tests use made-up pages and need no network. CI (`.github/workflows/ci.yml`) runs them on Linux, Windows and macOS with Python 3.11 and 3.14, installing only dependency releases at least 3 days old, and runs `doctor` and `validate` against a fresh Hermes install on Linux. It also runs weekly, so a dependency release that breaks the plugin shows up without a code change.
+Runs everything locally, no cloud CI: for Python 3.11 and 3.14, `uv` builds a throwaway environment with the dependencies from `pyproject.toml` (only releases at least 3 days old, the release-age quarantine the Hermes plugin guide recommends) and runs the tests; then the Hermes on the machine runs `hermes plugins doctor . --ci` (loads the plugin the way Hermes does) and `hermes plugins validate . --install-deps` (the catalog CI check). `--python 3.12` tests other versions, `--skip-hermes` runs the tests only.
+
+The tests use made-up pages and need no network, except the PDF tests, which start a child Python.
 
 ## License
 
