@@ -20,7 +20,8 @@ from . import extract
 
 CRAWL4AI_REQUIREMENT = "crawl4ai>=0.9.5,<0.10"
 TEST_PAGE = "https://www.iana.org/help/example-domains"
-TEST_MISSING = "https://www.iana.org/grounded-web-test-page-that-does-not-exist"
+SEARXNG_GUIDE = "https://hermes-agent.nousresearch.com/docs/user-guide/features/web-search"
+TEST_MISSING ="https://www.iana.org/grounded-web-test-page-that-does-not-exist"
 
 
 # ---------------------------------------------------------------- reading the current state
@@ -176,17 +177,35 @@ def step_search(args, s: dict, interactive: bool) -> None:
         return
     if choice == "searxng":
         url = args.searxng_url or _ask("   SearXNG URL?", s["searxng_url"] or "http://localhost:8080", interactive)
-        problem = _check_searxng(url)
-        if problem:
+        while (problem := _check_searxng(url)):
             print(f"   ! {problem}")
-            if not _confirm("Save this SearXNG URL anyway?", False, interactive, problem):
+            print(f"   No SearXNG yet? Hermes's guide runs one with Docker: {SEARXNG_GUIDE}")
+            # Never leave search unset without saying so: DuckDuckGo is the safe default.
+            fallback = "save" if args.searxng_url and not interactive else "ddgs"
+            what = _choose("SearXNG is not answering. What now?", [
+                ("ddgs", "Use DuckDuckGo instead (works now, no server)"),
+                ("retry", "Enter another SearXNG URL"),
+                ("save", "Save this URL anyway (start SearXNG later)"),
+                ("keep", f"Keep the current search backend ({s['search_backend']})"),
+            ], fallback, interactive, problem)
+            if what == "retry":
+                url = _ask("   SearXNG URL?", url, interactive)
+                continue
+            if what == "keep":
+                print(f"   Search backend unchanged: {s['search_backend']}")
                 return
+            if what == "ddgs":
+                print("   Using DuckDuckGo instead. Run setup again once SearXNG is up.")
+                choice = "ddgs"
+            break
         else:
             print("   SearXNG answers JSON searches.")
-        from hermes_cli.config import save_env_value
-        save_env_value("SEARXNG_URL", url.rstrip("/"))
-        _set("web.search_backend", "searxng")
-    elif choice == "ddgs":
+        if choice == "searxng":
+            from hermes_cli.config import save_env_value
+            save_env_value("SEARXNG_URL", url.rstrip("/"))
+            _set("web.search_backend", "searxng")
+            return
+    if choice == "ddgs":
         if not s["ddgs"]:
             print("   DuckDuckGo needs Hermes's `ddgs` extra.")
             if not _confirm("Install Hermes's ddgs extra now?", True, interactive,
