@@ -65,7 +65,7 @@ A real case, on Hermes 0.22.7 with Ministral 3 3B: asked for the RTX 5080's spec
 
 **What you can do:** with a model that has room, raise the window, for example `hermes config set web.extract_char_limit 30000` (two pages then take about 16,000 tokens). Keep the default with a small context.
 
-**For Hermes:** the window is a fixed head and tail. Picking it from the question, as grounded-web does, would help every backend. The query is not passed to extract providers today (`extract(urls, **kwargs)`), which is why grounded-web reads it from hooks.
+**For Hermes:** the window is a fixed head and tail. Picking it from the question, as grounded-web does, would help every backend. The query is not passed to extract providers today (`extract(urls, **kwargs)`), which is why grounded-web reads it from hooks. The 20-minute extract cache is documented for users ([Result caching](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-search#result-caching)) but not in the web provider plugin guide: a provider is not told that a cache hit can skip it, and the `cached` flag Hermes sets on a hit is dropped before the result reaches plugin hooks. Keeping that flag in the result would let a plugin say, for example, that a listed source was read earlier rather than just now.
 
 ## Which pages are listed
 
