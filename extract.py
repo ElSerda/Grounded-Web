@@ -156,7 +156,13 @@ def merge(main_text: str, browser_md: str) -> tuple[str, str]:
 
 
 DOC_TIMEOUT = 60
-DOC_MEMORY_LIMIT = 1024 * 1024 * 1024  # POSIX only: Windows has no per-process limit to set
+# POSIX only (Windows has no per-process limit to set). This caps address space, not memory used:
+# anydoc uses about 85 MB on a 5 MB PDF but reserves far more, and the reservation grows with the
+# number of threads and malloc arenas. With DOC_CHILD_ENV below it peaks near 420 MB on 16 cores.
+DOC_MEMORY_LIMIT = 2 * 1024 * 1024 * 1024
+# Few threads and malloc arenas: a document needs no more, and it keeps the child small and
+# polite on shared machines.
+DOC_CHILD_ENV = {"MALLOC_ARENA_MAX": "2", "RAYON_NUM_THREADS": "4"}
 DOC_READER = Path(__file__).with_name("doc_reader.py")
 # What anydoc converts, by content type and by URL extension (Hermes's ANYDOC_EXTENSIONS).
 # What anydoc converts (Hermes's ANYDOC_EXTENSIONS plus CSV), and the format name anydoc takes.
@@ -201,6 +207,17 @@ def _limit_memory() -> None:  # runs in the child, before anydoc starts
     resource.setrlimit(resource.RLIMIT_AS, (DOC_MEMORY_LIMIT, DOC_MEMORY_LIMIT))
 
 
+def _child_failure(stderr: str) -> str:
+    """One readable line from a crashed reader: the exception, not Rust's trailing backtrace hint."""
+    if "MemError" in stderr or "MemoryError" in stderr:
+        return f"the document needs more than {DOC_MEMORY_LIMIT // 2**30} GB of address space"
+    lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
+    for line in reversed(lines):
+        if "Error" in line or "Exception" in line:
+            return line[:200]
+    return (lines or ["no output"])[-1][:200]
+
+
 def ensure_doc_reader() -> None:
     """Make anydoc importable: Hermes's `doc-extract` extra, the way its read_file tool does.
 
@@ -229,7 +246,7 @@ async def document_text_isolated(data: bytes, fmt: str | None = None) -> str:
     # Hermes runs a base interpreter and adds its package environment to sys.path at startup, so
     # the child gets the parent's import path explicitly (and no user site-packages: -s).
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p and os.path.isdir(p)),
-           "PYTHONIOENCODING": "utf-8"}
+           "PYTHONIOENCODING": "utf-8", **DOC_CHILD_ENV}
     proc = await asyncio.create_subprocess_exec(
         sys.executable, "-s", str(DOC_READER), str(MAX_CONTENT_CHARS), fmt or "",
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -242,8 +259,7 @@ async def document_text_isolated(data: bytes, fmt: str | None = None) -> str:
         await proc.wait()
         raise RuntimeError(f"document reading stopped after {DOC_TIMEOUT}s") from None
     if proc.returncode != 0:
-        last = (err.decode("utf-8", "replace").strip().splitlines() or ["no output"])[-1]
-        raise RuntimeError(last[:200])
+        raise RuntimeError(_child_failure(err.decode("utf-8", "replace")))
     result = json.loads(out.decode("utf-8"))
     if result.get("needs_ocr") is not None:
         raise NeedsOcr(result["needs_ocr"])

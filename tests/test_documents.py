@@ -120,3 +120,18 @@ def test_without_ocr_the_error_says_how_to_turn_it_on(monkeypatch):
     monkeypatch.setattr(ex, "ocr_python", lambda: None)
     with pytest.raises(RuntimeError, match="hermes grounded-web setup"):
         asyncio.run(ex.ocr_isolated(b"%PDF-1.4", [1]))
+
+
+def test_a_memory_crash_reads_as_one_clear_line():
+    rust_panic = ('pyo3_runtime.PanicException: assertion `left == right` failed\n  left: MemError\n right: Ok\n'
+                  'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n')
+    assert "GB of address space" in ex._child_failure(rust_panic)
+    assert ex._child_failure("Traceback...\nValueError: bad xref\nnote: hint\n") == "ValueError: bad xref"
+
+
+def test_the_reader_runs_with_few_threads_and_arenas(tmp_path, monkeypatch):
+    probe = tmp_path / "probe.py"
+    probe.write_text('import json, os, sys\nsys.stdin.buffer.read()\n'
+                     'print(json.dumps({"text": os.environ["MALLOC_ARENA_MAX"] + "/" + os.environ["RAYON_NUM_THREADS"]}))\n')
+    monkeypatch.setattr(ex, "DOC_READER", probe)
+    assert asyncio.run(ex.document_text_isolated(b"%PDF-1.4")) == "2/4"
