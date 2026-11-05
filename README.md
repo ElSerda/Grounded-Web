@@ -88,7 +88,7 @@ Under Settings → Plugins in Hermes Desktop, or `plugins.entries.grounded-web.s
 | Key | Default | Meaning |
 |---|---|---|
 | `language` | `auto` | Footer language: `auto` (Hermes's `display.language`; English for languages other than en/fr), `answer` (the reply's language), `en` or `fr` |
-| `show_sources` | `true` | List the opened pages |
+| `show_sources` | `auto` | `auto`: list the opened pages, unless another plugin also rewrites replies (see below). `always`: list them anyway. `never`: no list |
 | `verify` | `false` | Show the value check under the sources |
 | `remind` | `true` | Add one sentence to each user message (about 50 tokens): search snippets are not sources, open the pages |
 
@@ -104,6 +104,10 @@ Search and page reading are separate settings: grounded-web only reads pages. It
 - **Processes:** one Crawl4AI child process per page, at most three at once, each stopped after 60 seconds.
 - **Writes:** `web.search_backend`, `web.extract_backend`, `skills.auto_load` and, for SearXNG, `SEARXNG_URL` in `.env`, all through Hermes's own config functions and only during `setup`. Nothing else is stored: page text lives in memory only, for at most 30 pages per conversation and 20 conversations, and is gone when Hermes stops.
 - **No telemetry**, no credentials read, no self-update.
+
+## Other plugins that rewrite replies
+
+Hermes runs every plugin's `transform_llm_output` hook but keeps only the first rewrite of a reply, so two plugins that append a footer hide one another without warning. grounded-web looks for any other loaded plugin with that hook, through Hermes's public plugin summaries. With `show_sources: auto` it then adds nothing and leaves the reply to that plugin. `hermes grounded-web status` names the plugin. Set `show_sources: always` to show grounded-web's footer instead, or disable the other plugin. Page reading and the reminder keep working either way.
 
 ## Limits
 
