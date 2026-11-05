@@ -65,21 +65,11 @@ _WALL_WORDS_RE = re.compile(
     re.IGNORECASE,
 )
 # What the HTML head says about a page: an article (og:type article, a publication date, an
-# <article> element) is content, never an error page, whatever its title or text.
+# <article> element) is content, never a bot wall, whatever its title or text.
 _ARTICLE_RE = re.compile(
     r"<meta[^>]+(?:property|name)=[\"'](?:og:type[\"'][^>]+content=[\"']article|article:published_time)|<article[\s>]",
     re.IGNORECASE,
 )
-# Error pages: only when the page is short, since articles mention these words too. A bare 404 or
-# 410 is not enough: data has those numbers too (a CSV with 404 passengers in a month).
-_ERROR_RE = re.compile(
-    r"\b(?:(?:error|erreur|http|code|status)\s*[:#-]?\s*(?:404|410)|(?:404|410)\s*(?:[-:|–—]\s*)?"
-    r"(?:error|erreur|not found|page|gone|introuvable)|not found|page introuvable|introuvable|"
-    r"n'existe (?:pas|plus)|no longer available|forbidden|enable javascript|too many requests)\b",
-    re.IGNORECASE,
-)
-
-
 @dataclass
 class Page:
     url: str
@@ -108,13 +98,15 @@ class Page:
 
 
 def looks_blocked(title: str, text: str, headers: dict | None = None, html: str = "") -> str:
-    """A reason when an HTTP 200 page is really a bot wall or an error page, else an empty string.
+    """A reason when an HTTP 200 page is really a bot wall, else an empty string.
 
-    The HTTP status already caught real errors (404, 403...). This is for pages that answer 200:
-    the response headers first (Cloudflare marks its challenges), then the HTML head (an article
-    is content), then the text, where only a challenge page's own phrases count anywhere and the
-    words an article could also use count only on a short page. Without `html` (a
-    result from another backend), the text alone is judged, with the same limits.
+    Errors come from the HTTP status only (404, 410, 403, 5xx): a page's text is never searched
+    for "404" or "not found", which a table, a price or a blog post can hold. A bot wall can
+    answer 200, though, so for walls: the response headers first (Cloudflare marks its
+    challenges), then the text, where a challenge page's own phrases count at any length and
+    the words an article could also use ("captcha", "access denied") count only on a short page
+    that does not declare itself an article in its HTML head. Without `html` (a result from
+    another backend), the text alone is judged, with the same limits.
     """
     headers = {k.lower(): str(v).lower() for k, v in (headers or {}).items()}
     if headers.get("cf-mitigated") == "challenge":
@@ -124,11 +116,9 @@ def looks_blocked(title: str, text: str, headers: dict | None = None, html: str 
     article = bool(html) and bool(_ARTICLE_RE.search(html[:200_000]))
     if not m and short and not article:
         m = _WALL_WORDS_RE.search(f"{title}\n{text[:600]}")
-    if not m and short and not article:
-        m = _ERROR_RE.search(f"{title}\n{text[:300]}")
     if not m:
         return ""
-    return f"error or block page ({m.group(0)!r} in {'title' if m.group(0).lower() in title.lower() else 'text'})"
+    return f"bot wall ({m.group(0)!r} in {'title' if m.group(0).lower() in title.lower() else 'text'})"
 
 
 def strip_links(markdown: str) -> str:

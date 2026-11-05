@@ -57,17 +57,15 @@ def test_merge_without_browser():
     assert ex.merge(MAIN, "") == (MAIN, "trafilatura")
 
 
-def test_block_and_error_pages():
+def test_bot_walls():
     assert ex.looks_blocked("Just a moment...", "Checking your browser before accessing.")
-    assert ex.looks_blocked("Page introuvable", "Désolé, cette page n'existe plus.")
-    assert ex.looks_blocked("Oops", "404 - the page you requested was not found")
     assert ex.looks_blocked("Access Denied", "You don't have permission to access this server.")
 
 
-def test_error_codes_need_their_context():
-    for title, text in [("Error 404", "Sorry."), ("Oops", "HTTP 404"), ("Not here", "404 Not Found"),
-                        ("Gone", "410 Gone: this item was removed."), ("Erreur", "Erreur 404 : page introuvable")]:
-        assert ex.looks_blocked(title, text), (title, text)
+def test_error_words_in_a_200_page_are_content():
+    # Errors come from the HTTP status only: a page that answers 200 is never an error by its text.
+    assert ex.looks_blocked("Page introuvable", "Désolé, cette page n'existe plus.") == ""
+    assert ex.looks_blocked("Oops", "404 - the page you requested was not found") == ""
 
 
 def test_a_short_table_with_the_number_404_is_content():
