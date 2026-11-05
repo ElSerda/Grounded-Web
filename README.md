@@ -5,7 +5,7 @@ A Hermes Agent plugin for web answers built from pages that were really read.
 - **Reads pages and documents on your machine** for `web_extract` (HTML, PDF, Word, PowerPoint, Excel, OpenDocument, EPUB, RTF, CSV): no API key, no extraction service.
 - **Reports 404s, error pages and bot walls as errors**, so the model never takes them for content.
 - **Lists the pages the answer really used**, under the answer, with clickable links. Pages are taken from the tool results, never from the model's text, so the list cannot name a page that was not read.
-- **Pushes the model to open pages** instead of answering from search snippets: a bundled skill and a one-sentence reminder.
+- **Pushes the model to open pages** instead of answering from search snippets: a bundled skill and a short reminder.
 - **Keeps long pages useful to small models**: one URL per `web_extract` call, and on a page longer than what Hermes shows the model, the passages about the question come first. See [What the model sees of a long page](#what-the-model-sees-of-a-long-page).
 
 A real run, fully local: Gemma 4 E4B in LM Studio, DuckDuckGo search, pages read by grounded-web.
@@ -123,7 +123,7 @@ Under Settings → Plugins in Hermes Desktop, or `plugins.entries.grounded-web.s
 |---|---|---|
 | `language` | `auto` | Footer language: `auto` (Hermes's `display.language`; English for languages other than en/fr), `answer` (the reply's language), `en` or `fr` |
 | `show_sources` | `auto` | `auto`: list the opened pages, unless another plugin also rewrites replies (see below). `always`: list them anyway. `never`: no list |
-| `remind` | `true` | Add one sentence to each user message (about 50 tokens): search snippets are not sources, open the pages |
+| `remind` | `true` | Add a short reminder to each user message (about 70 tokens): search snippets are not sources, open the pages, and open the pages a multi-URL call left out |
 | `one_url_per_call` | `true` | A `web_extract` call that asks for several URLs reads only the first; the result lists the others |
 | `focus` | `true` | On a page longer than what Hermes shows the model, put the passages about the question first (nothing is removed) |
 
@@ -131,7 +131,7 @@ Search and page reading are separate settings: grounded-web only reads pages. It
 
 ## What it does, for review
 
-- **Hooks:** `pre_llm_call` (starts a record for the turn, notes the user's message for `focus` and, unless `remind` is off, appends the one-sentence reminder to the user message), `pre_tool_call` (only for `web_extract`: keeps the first URL of a call that asks for several when `one_url_per_call` is on, and notes which question the page is read for), `transform_tool_result` (only for such a call: adds the URLs left out to its result), `post_tool_call` (keeps the text of `web_extract` results and the `web_search` query), `transform_llm_output` (appends the footer; the answer itself is not changed, so a streamed answer is not printed twice).
+- **Hooks:** `pre_llm_call` (starts a record for the turn, notes the user's message for `focus` and, unless `remind` is off, appends the short reminder to the user message), `pre_tool_call` (only for `web_extract`: keeps the first URL of a call that asks for several when `one_url_per_call` is on, and notes which question the page is read for), `transform_tool_result` (only for such a call: adds the URLs left out to its result), `post_tool_call` (keeps the text of `web_extract` results and the `web_search` query), `transform_llm_output` (appends the footer; the answer itself is not changed, so a streamed answer is not printed twice).
 - **Web provider:** `grounded-web`, extract only.
 - **CLI:** `hermes grounded-web status|setup|uninstall`.
 - **Skill:** `grounded-web:web-research`, read-only, loaded only if you auto-load it or call it.

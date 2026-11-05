@@ -1,7 +1,7 @@
 ---
 name: web-research
 description: "Answer web questions from opened pages, not snippets."
-version: 1.1.0
+version: 1.2.0
 author: ElSerda
 license: MIT
 platforms: [linux, macos, windows]
@@ -46,6 +46,8 @@ and any search backend for `web_search`.
    documentation.
 3. Call `web_extract` with one URL per call, never several URLs together. It reads PDFs too, so
    open datasheets directly.
+   If you pass several URLs, only the first is read and `grounded_web_note` lists the others:
+   open the ones you still need, each in its own call.
 4. If a result returns `error`, open the next result. One failure never ends the research.
 5. If the pages do not answer the question, search again with different words, up to 3 searches.
 6. Answer using only facts found in the pages you opened. Keep numbers and units as written.

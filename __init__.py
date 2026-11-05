@@ -1,7 +1,7 @@
 """grounded-web: reads web pages on this machine and lists the pages a web answer used.
 
 Hooks only, no extra model call:
-  pre_llm_call          starts a fresh record for the turn and adds a one-sentence reminder
+  pre_llm_call          starts a fresh record for the turn and adds a short reminder
   pre_tool_call         keeps only the first URL of a web_extract call that asks for several (one
                         URL per call keeps each page within a small model's context), and notes
                         the question so a long page has its relevant passages first (focus.py)
@@ -75,6 +75,7 @@ def _pages(result: Any) -> list[dict]:
 REMINDER = (
     "[grounded-web] If you search the web for this message: search snippets are not sources. "
     "Open the most relevant results with web_extract, one URL per call, before answering. "
+    "If a web_extract result lists pages it did not open, open the ones you still need. "
     "The pages you open are listed under your answer."
 )
 
