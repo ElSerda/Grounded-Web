@@ -28,7 +28,7 @@ The footer is in English or French. By default it follows Hermes's `display.lang
 A web answer can go wrong in three places, and the model cannot see any of them.
 
 1. **The page reader drops the data.** Main-text extractors discard what looks like page furniture. On NVIDIA's RTX 5080 page, trafilatura keeps 3,400 characters of marketing text and drops the whole spec table, so the model never sees "8K at 165Hz".
-2. **A source is wrong.** Notebookcheck's page for the same card says "8K at 120Hz". A model that reads only that page repeats it faithfully.
+2. **A source drops the context.** Notebookcheck's page for the same card says "8K at 120Hz with DSC". NVIDIA's footnote gives 165 Hz over DisplayPort 2.1b and 120 Hz over HDMI 2.1b, so the figure is the HDMI one without the connector. A model that reads only that page reports 120 Hz as the card's maximum.
 3. **The model fills gaps from memory.** In tests, local models wrote core counts, versions and power figures that were on none of the pages they had opened.
 
 grounded-web fixes the first and makes the other two visible.
@@ -105,6 +105,8 @@ Search and page reading are separate settings: grounded-web only reads pages. It
 ## Limits
 
 - The check confirms that a value appears in an opened page. It cannot tell whether that page is right, unless another opened page disagrees.
+- A disagreement can be two correct values for different conditions (165 Hz over DisplayPort, 120 Hz over HDMI). It shows where to look, not which page is wrong.
+- Values without a number and unit it knows (`3-slot`, `5th generation`) are not checked.
 - Values computed by the model (`30 Gbps` from "30000 MT/s") are reported as missing. That is on purpose: they are not in the sources.
 - Pages behind logins or strong bot protection cannot be read; they come back as errors.
 
