@@ -27,18 +27,25 @@ def extract_result(*pages):
     return json.dumps({"results": [dict(p) for p in pages]})
 
 
+def search_result(*hits):
+    return json.dumps({"success": True, "data": {"web": [dict(h) for h in hits]}})
+
+
 PAGE = {"url": "https://maker.example/gpu", "content": "Total Graphics Power: 360 W. Memory: 16 GB GDDR7."}
+REVIEW = {"url": "https://review.example/gpu", "content": "Boost clock 2.62 GHz, L2 cache 64 MB."}
 
 
-def run_turn(ctx, answer, tools):
+def run_turn(ctx, answer, tools, session="s1"):
     h = ctx.hooks
-    h["pre_llm_call"](session_id="s1", user_message="q")
+    h["pre_llm_call"](session_id=session, user_message="q")
     for name, result in tools:
-        h["post_tool_call"](tool_name=name, args={}, result=result, session_id="s1")
-    return h["transform_llm_output"](response_text=answer, session_id="s1", model="m", platform="cli")
+        h["post_tool_call"](tool_name=name, args={}, result=result, session_id=session)
+    return h["transform_llm_output"](response_text=answer, session_id=session, model="m", platform="cli")
 
 
 def setup(settings=None):
+    gw._sessions.clear()
+    gw._turns.clear()
     ctx = FakeCtx(settings)
     gw.register(ctx)
     return ctx
@@ -50,16 +57,20 @@ def test_footer_lists_pages_and_flags_missing_value():
     out = run_turn(ctx, answer, [("web_search", "{}"), ("web_extract", extract_result(PAGE))])
     assert out.startswith(answer + "\n\n")  # append-only
     assert "Sources (pages ouvertes) :\n- https://maker.example/gpu" in out
-    assert "Vérification : 2 valeurs sur 3 retrouvées dans ces pages." in out
-    assert "Absent des pages ouvertes : 999 $" in out
+    assert "⚠ 1 valeur chiffrée sur 3 ne figure pas dans les pages ouvertes : 999 $" in out
 
 
-def test_english_answer_gets_english_footer():
+def test_all_found_reads_plainly():
     ctx = setup()
     out = run_turn(ctx, "The card draws 360 W and has 16 GB of memory.", [("web_extract", extract_result(PAGE))])
     assert "Sources (opened pages):" in out
-    assert "Check: 2 of 2 values found in these pages." in out
-    assert "Not in the opened pages" not in out
+    assert "✓ All 2 numbers in this answer appear in the opened pages." in out
+
+
+def test_single_number_wording():
+    ctx = setup()
+    out = run_turn(ctx, "The card draws 360 W.", [("web_extract", extract_result(PAGE))])
+    assert "✓ The number in this answer appears in the opened pages." in out
 
 
 def test_search_only_turn_says_so():
@@ -76,6 +87,16 @@ def test_failed_pages_are_not_listed():
     assert out.endswith("Aucune page n'a pu être lue.")
 
 
+def test_bot_wall_returned_as_content_is_not_a_source():
+    # Hermes's keyless rescue can bring a bot wall back as page content.
+    ctx = setup()
+    wall = {"url": "https://wall.example/specs", "title": "Specs | Wall",
+            "content": "# Specs\n\n# Automated bot check in progress\n\nDrag the handle to the target"}
+    out = run_turn(ctx, "The card draws 360 W.", [("web_extract", extract_result(wall, PAGE))])
+    assert "wall.example" not in out
+    assert "maker.example" in out
+
+
 def test_turn_without_web_tools_is_left_alone():
     ctx = setup()
     assert run_turn(ctx, "Bonjour.", [("read_file", "{}")]) is None
@@ -85,11 +106,7 @@ def test_settings_turn_parts_off():
     ctx = setup({"verify": False, "language": "en"})
     out = run_turn(ctx, "La carte consomme 360 W, pour 999 $.", [("web_extract", extract_result(PAGE))])
     assert "Sources (opened pages):" in out
-    assert "Check:" not in out
-
-
-def search_result(*hits):
-    return json.dumps({"success": True, "data": {"web": [dict(h) for h in hits]}})
+    assert "numbers" not in out
 
 
 def test_search_only_turn_is_checked_against_snippets():
@@ -97,8 +114,25 @@ def test_search_only_turn_is_checked_against_snippets():
     hit = {"url": "https://maker.example/gpu", "title": "GPU X", "description": "GPU X draws 360 W, 16 GB GDDR7."}
     out = run_turn(ctx, "La carte consomme 360 W et coûte 999 $.", [("web_search", search_result(hit))])
     assert "Aucune page ouverte" in out
-    assert "Vérification sur les seuls extraits de recherche : 1 valeurs sur 2 retrouvées." in out
-    assert "Absent des extraits : 999 $" in out
+    assert "⚠ 1 valeur chiffrée sur 2 ne figure pas dans les extraits de recherche : 999 $" in out
+
+
+def test_pages_from_earlier_turns_still_count():
+    ctx = setup()
+    run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))])
+    # Second turn opens another page but also reuses the first page's values.
+    out = run_turn(ctx, "Boost à 2,62 GHz, 64 Mo de cache L2 et 360 W.", [("web_extract", extract_result(REVIEW))])
+    assert "Sources (pages ouvertes) :\n- https://review.example/gpu" in out
+    assert "Aussi utilisées, ouvertes plus tôt dans la conversation :\n- https://maker.example/gpu" in out
+    assert "✓ Les 3 valeurs chiffrées de la réponse figurent dans les pages ouvertes." in out
+
+
+def test_sessions_do_not_share_pages():
+    ctx = setup()
+    run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))], session="a")
+    out = run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(REVIEW))], session="b")
+    assert "maker.example" not in out
+    assert "⚠ 1 valeur chiffrée sur 1" in out
 
 
 def test_reminder_is_added_to_each_turn_and_can_be_turned_off():

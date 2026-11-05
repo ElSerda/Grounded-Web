@@ -10,25 +10,35 @@ from .verify import Report
 _TEXT = {
     "en": {
         "sources": "Sources (opened pages):",
+        "earlier": "Also used, opened earlier in this conversation:",
         "snippets": "No page opened: this answer relies on search snippets only.",
         "no_page": "No page could be read.",
-        "checked": "Check: {found} of {total} values found in these pages.",
-        "missing": "Not in the opened pages: {items}",
-        "conflict": "Pages disagree after “{context}”: {values}",
-        "checked_snippets": "Check against the search snippets only: {found} of {total} values found.",
-        "missing_snippets": "Not in the snippets: {items}",
-        "conflict_snippets": "Snippets disagree after “{context}”: {values}",
+        "all_one": "✓ The number in this answer appears in the opened pages.",
+        "all_many": "✓ All {total} numbers in this answer appear in the opened pages.",
+        "missing_one": "⚠ 1 of the {total} numbers in this answer is not in the opened pages: {items}",
+        "missing_many": "⚠ {n} of the {total} numbers in this answer are not in the opened pages: {items}",
+        "conflict": "⚠ The pages give different values after “{context}”: {values}",
+        "all_one_snippets": "✓ The number in this answer appears in the search snippets (no page was opened).",
+        "all_many_snippets": "✓ All {total} numbers in this answer appear in the search snippets (no page was opened).",
+        "missing_one_snippets": "⚠ 1 of the {total} numbers in this answer is not in the search snippets: {items}",
+        "missing_many_snippets": "⚠ {n} of the {total} numbers in this answer are not in the search snippets: {items}",
+        "conflict_snippets": "⚠ The snippets give different values after “{context}”: {values}",
     },
     "fr": {
         "sources": "Sources (pages ouvertes) :",
+        "earlier": "Aussi utilisées, ouvertes plus tôt dans la conversation :",
         "snippets": "Aucune page ouverte : réponse basée sur les extraits de recherche.",
         "no_page": "Aucune page n'a pu être lue.",
-        "checked": "Vérification : {found} valeurs sur {total} retrouvées dans ces pages.",
-        "missing": "Absent des pages ouvertes : {items}",
-        "conflict": "Les pages divergent après « {context} » : {values}",
-        "checked_snippets": "Vérification sur les seuls extraits de recherche : {found} valeurs sur {total} retrouvées.",
-        "missing_snippets": "Absent des extraits : {items}",
-        "conflict_snippets": "Les extraits divergent après « {context} » : {values}",
+        "all_one": "✓ La valeur chiffrée de la réponse figure dans les pages ouvertes.",
+        "all_many": "✓ Les {total} valeurs chiffrées de la réponse figurent dans les pages ouvertes.",
+        "missing_one": "⚠ 1 valeur chiffrée sur {total} ne figure pas dans les pages ouvertes : {items}",
+        "missing_many": "⚠ {n} valeurs chiffrées sur {total} ne figurent pas dans les pages ouvertes : {items}",
+        "conflict": "⚠ Les pages donnent des valeurs différentes après « {context} » : {values}",
+        "all_one_snippets": "✓ La valeur chiffrée de la réponse figure dans les extraits de recherche (aucune page ouverte).",
+        "all_many_snippets": "✓ Les {total} valeurs chiffrées de la réponse figurent dans les extraits de recherche (aucune page ouverte).",
+        "missing_one_snippets": "⚠ 1 valeur chiffrée sur {total} ne figure pas dans les extraits de recherche : {items}",
+        "missing_many_snippets": "⚠ {n} valeurs chiffrées sur {total} ne figurent pas dans les extraits de recherche : {items}",
+        "conflict_snippets": "⚠ Les extraits donnent des valeurs différentes après « {context} » : {values}",
     },
 }
 
@@ -61,8 +71,9 @@ def _site(url: str) -> str:
 
 
 def build(opened: list[str], searched: bool, report: Report | None, lang: str, show_sources: bool = True,
-          basis: str = "pages") -> str:
-    """basis: "pages" when the report checked opened pages, "snippets" when only search results."""
+          basis: str = "pages", earlier: list[str] | None = None) -> str:
+    """basis: "pages" when the report checked opened pages, "snippets" when only search results.
+    earlier: pages from previous turns whose values the answer uses."""
     t = _TEXT[lang]
     suffix = "_snippets" if basis == "snippets" else ""
     lines: list[str] = []
@@ -70,15 +81,21 @@ def build(opened: list[str], searched: bool, report: Report | None, lang: str, s
         if opened:
             lines.append(t["sources"])
             lines.extend(f"- {url}" for url in opened)
-        else:
+        if earlier:
+            lines.append(t["earlier"])
+            lines.extend(f"- {url}" for url in earlier)
+        if not opened and not earlier:
             lines.append(t["snippets"] if searched else t["no_page"])
     if report is not None and report.checked:
         if lines:
             lines.append("")
-        lines.append(t["checked" + suffix].format(found=len(report.grounded), total=len(report.checked)))
-        if report.missing:
-            lines.append(t["missing" + suffix].format(items=", ".join(f.text for f in report.missing)))
+        total, n = len(report.checked), len(report.missing)
+        if not n:
+            lines.append(t[("all_one" if total == 1 else "all_many") + suffix].format(total=total))
+        else:
+            items = ", ".join(f.text for f in report.missing)
+            lines.append(t[("missing_one" if n == 1 else "missing_many") + suffix].format(n=n, total=total, items=items))
         for c in report.conflicts:
-            values = " / ".join(f"{v} ({_site(u)})" for u, v in c.found.items())
+            values = ", ".join(f"{v} ({_site(u)})" for u, v in c.found.items())
             lines.append(t["conflict" + suffix].format(context=c.context, values=values))
     return "\n".join(lines)

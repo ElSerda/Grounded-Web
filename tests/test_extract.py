@@ -82,3 +82,10 @@ def test_unlabeled_number_rows_are_not_added():
     extra = ex.complement("Some text about the card.", md)
     assert "117.5" not in extra and "240 fps" not in extra
     assert "Memory Speed" in extra
+
+
+def test_page_failures_use_hermes_origin_wording():
+    # Hermes skips its keyless rescue for "HTTP <code> from origin" errors.
+    assert ex._origin(200, "error or block page").startswith("HTTP 200 from origin: ")
+    assert ex._origin(0, "x").startswith("HTTP 200 from origin")
+    assert ex._origin(403, "bot wall").startswith("HTTP 403 from origin: ")

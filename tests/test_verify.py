@@ -91,3 +91,13 @@ def test_model_numbers_do_not_make_conflicts():
         {"url": "https://b.example", "content": "Compared with the GeForce RTX 5090 flagship."},
     ]
     assert verify.check("Elle consomme 360 W.", pages).conflicts == []
+
+
+def test_unicode_hyphen_in_units():
+    pages = [{"url": "https://a.example", "content": "Memory Interface Width 256-bit"}]
+    assert missing("Mémoire : 16 Go, interface 256\u2011bit.", pages + [{"url": "https://b.example", "content": "16 GB"}]) == []
+
+
+def test_used_pages_are_reported():
+    report = verify.check("8K à 165 Hz.", [OFFICIAL, REVIEW])
+    assert report.used == [OFFICIAL["url"]]

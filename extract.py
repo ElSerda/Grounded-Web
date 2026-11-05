@@ -236,6 +236,16 @@ async def _download(client, url: str):
         return response, b"".join(chunks), size > limit
 
 
+def _origin(status: int, reason: str) -> str:
+    """A page-level failure in Hermes's origin wording ("HTTP <code> from origin: ...").
+
+    The page answered, but with nothing usable. Hermes does not hand such a page to its keyless
+    rescue, which would fetch it again through an outside service and can return the same wall
+    as content.
+    """
+    return f"HTTP {status or 200} from origin: {reason}"[:300]
+
+
 async def read_page(client, url: str) -> Page:
     try:
         return await _read_page(client, url)
@@ -259,12 +269,12 @@ async def _read_page(client, url: str) -> Page:
         if browser:
             browser.cancel()
         if too_big:
-            return Page(url, error=f"PDF larger than {MAX_PDF_BYTES // 2**20} MB")
+            return Page(url, error=_origin(status, f"PDF larger than {MAX_PDF_BYTES // 2**20} MB"))
         try:
             text = await asyncio.to_thread(pdf_text, body)
         except Exception as exc:  # noqa: BLE001
-            return Page(url, error=f"unreadable PDF: {exc}"[:300])
-        return Page(url, url.rsplit("/", 1)[-1], text, "" if text else "PDF has no text layer (scanned?)", "pdf")
+            return Page(url, error=_origin(status, f"unreadable PDF: {exc}"))
+        return Page(url, url.rsplit("/", 1)[-1], text, "" if text else _origin(status, "PDF has no text layer (scanned?)"), "pdf")
 
     title, main = "", ""
     if not fetch_error:
@@ -286,7 +296,7 @@ async def _read_page(client, url: str) -> Page:
     content, engine = merge(main, browser_md)
     title = title or view_title
     if not content.strip():
-        return Page(url, title, error=blocked or "no readable text on the page")
+        return Page(url, title, error=_origin(status, blocked or "no readable text on the page"))
     return Page(url, title, content, engine=engine)
 
 

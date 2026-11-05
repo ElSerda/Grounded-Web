@@ -97,10 +97,12 @@ class Report:
     grounded: list[Fact]
     missing: list[Fact]
     conflicts: list[Conflict]
+    used: list[str] = field(default_factory=list)  # pages holding a value with a unit, price or version
 
 
 def _clean(text: str) -> str:
     text = re.sub(r"[¹²³⁰-₟]", "", text)  # footnote marks, before NFKC turns them into digits
+    text = re.sub(r"[‐-―−]", "-", text)  # non-breaking hyphen, dashes, minus sign
     text = unicodedata.normalize("NFKC", text)
     text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)  # markdown links -> their text
     return text.replace("**", "").replace("__", "")
@@ -232,10 +234,12 @@ def check(answer: str, pages: list[dict]) -> Report:
     """pages: [{"url": ..., "content": ...}] as returned by web_extract."""
     facts = extract_facts(answer)
     index = [o for p in pages if p.get("content") for o in _index_page(p.get("url", ""), p["content"])]
-    grounded, missing, conflicts = [], [], []
+    grounded, missing, conflicts, used = [], [], [], []
     for fact in facts:
         hits = [o for o in index if _matches(fact, o)]
         (grounded if hits else missing).append(fact)
+        if fact.kind != "number":  # bare numbers match too many pages to say a page was used
+            used.extend(o.url for o in hits if o.url not in used)
         if not hits or fact.kind == "number":
             continue
         # Same words before the value, same unit, different value, on another page.
@@ -254,4 +258,4 @@ def check(answer: str, pages: list[dict]) -> Report:
                     c.found.setdefault(r.url, r.written)
                 conflicts.append(c)
                 break
-    return Report(facts, grounded, missing, conflicts)
+    return Report(facts, grounded, missing, conflicts, used)
