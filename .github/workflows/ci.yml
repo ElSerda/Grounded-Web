@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"  # weekly: a new dependency release that breaks the plugin shows up here
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dependencies released at least 3 days ago
+        shell: bash
+        run: |
+          # Release-age quarantine, as Hermes does for its own dependencies (plugin guide,
+          # "Dependency security policy"): a release younger than 3 days is not installed.
+          cutoff=$(python -c "import datetime as d; print((d.datetime.now(d.timezone.utc) - d.timedelta(days=3)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+          python -m pip install --quiet uv
+          python -m venv .venv
+          uv pip install --python .venv --exclude-newer "$cutoff" -r pyproject.toml pytest
+      - name: Run the tests
+        shell: bash
+        run: |
+          if [ -d .venv/Scripts ]; then PY=.venv/Scripts/python; else PY=.venv/bin/python; fi
+          "$PY" -m pytest tests -q
+
+  hermes:
+    name: Hermes plugin checks (doctor, validate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Hermes Agent (stable channel)
+        run: curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --non-interactive --skip-browser --skip-computer-use
+      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Plugin doctor (loads the plugin the way Hermes does)
+        run: hermes plugins doctor . --ci
+      - name: Catalog validation (the check catalog CI runs)
+        run: hermes plugins validate . --install-deps

@@ -1,5 +1,7 @@
 # grounded-web
 
+[![CI](https://github.com/ElSerda/Grounded-Web/actions/workflows/ci.yml/badge.svg)](https://github.com/ElSerda/Grounded-Web/actions/workflows/ci.yml)
+
 A Hermes Agent plugin for web answers built from pages that were really read.
 
 - **Reads pages and PDFs on your machine** for `web_extract`: no API key, no extraction service.
@@ -40,7 +42,7 @@ grounded-web fixes the first two, pushes against the third, and shows which page
 ## How a page is read
 
 1. Download it. An HTTP error (404, 410, 5xx) is reported as an error, unless a browser can still open the page.
-2. PDF: text with pypdf. HTML: main text with trafilatura.
+2. PDF: text with pypdf, in a separate process stopped after 60 seconds (and limited to 1 GB of memory on Linux and macOS): pypdf keeps getting fixes for crafted PDFs that loop or exhaust memory, and a bad one must not hang Hermes. HTML: main text with trafilatura.
 3. With Crawl4AI installed, the same page is also opened in a headless browser. Lines of the browser view that hold values missing from the main text, such as spec table rows, are appended under "More values from this page". Pages that trafilatura cannot read, because scripts build them, use the browser view instead.
 4. Bot walls ("Just a moment...", "Automated bot check") and short error pages that answer HTTP 200 are reported as errors, in Hermes's `HTTP <code> from origin: ...` form. Hermes then does not re-fetch them through its keyless rescue (an outside service that can return the same wall as content), and a wall that another backend returns is never listed as a source.
 
@@ -104,7 +106,7 @@ Search and page reading are separate settings: grounded-web only reads pages. It
 - **CLI:** `hermes grounded-web status|setup|uninstall`.
 - **Skill:** `grounded-web:web-research`, read-only, loaded only if you auto-load it or call it.
 - **Network:** downloads the URLs the agent asks `web_extract` to read, directly from this machine with a desktop browser user agent. `setup` also checks the SearXNG URL you give it and reads two test pages on iana.org. Crawl4AI's browser loads the same URLs and their page assets.
-- **Processes:** one Crawl4AI child process per page, at most three at once, each stopped after 60 seconds.
+- **Processes:** one Crawl4AI child process per page, at most three at once, each stopped after 60 seconds; one child process per PDF (Hermes's own Python running `pdf_reader.py`), stopped after 60 seconds.
 - **Writes:** `web.search_backend`, `web.extract_backend`, `skills.auto_load` and, for SearXNG, `SEARXNG_URL` in `.env`, all through Hermes's own config functions and only during `setup` and `uninstall`; the values `setup` replaced, in `HERMES_HOME/plugin-data/grounded-web/previous.json`. Nothing else is stored: page text lives in memory only, for at most 30 pages per conversation and 20 conversations, and is gone when Hermes stops.
 - **Reads:** the `plugin.yaml` of other installed plugins, to find reply rewriters; Playwright's `.links` registrations and `browsers.json`, during `uninstall` only.
 - **No telemetry**, no credentials read, no self-update.
@@ -119,17 +121,27 @@ Hermes runs every plugin's `transform_llm_output` hook but keeps only the first 
 - An earlier page is matched on values with a unit, a price or a version; an answer that reuses only its prose is not linked to it.
 - Pages behind logins or strong bot protection cannot be read; they come back as errors.
 
+## Dependencies
+
+Declared in `pyproject.toml`, installed by Hermes inside its own constraints:
+
+| Package | Range | Floor chosen because |
+|---|---|---|
+| trafilatura | `>=1.10,<3` | oldest release that accepts lxml 6, which Hermes pins (tested 1.10 to 2.3) |
+| pypdf | `>=6.21.2,<7` | fixes for many crafted-PDF issues (infinite loops, memory exhaustion); also the version Hermes pins itself |
+| crawl4ai | `>=0.9.1,<0.10` | separate environment, installed by `setup`; 0.9.0 and older need lxml 5, which has no Python 3.14 wheels (tested 0.9.1 to 0.9.5) |
+
 ## Development
 
 ```
 python -m venv .venv
-.venv/Scripts/python -m pip install pytest      # Linux/macOS: .venv/bin/python
+.venv/Scripts/python -m pip install -r pyproject.toml pytest   # Linux/macOS: .venv/bin/python
 .venv/Scripts/python -m pytest tests
-hermes plugins doctor . --ci             # loads it the way Hermes does
+hermes plugins doctor . --ci              # loads it the way Hermes does
 hermes plugins validate . --install-deps  # the catalog CI check
 ```
 
-The tests use made-up pages and need no network.
+The tests use made-up pages and need no network. CI (`.github/workflows/ci.yml`) runs them on Linux, Windows and macOS with Python 3.11 and 3.14, installing only dependency releases at least 3 days old, and runs `doctor` and `validate` against a fresh Hermes install on Linux. It also runs weekly, so a dependency release that breaks the plugin shows up without a code change.
 
 ## License
 

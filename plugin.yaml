@@ -13,9 +13,6 @@ provides_hooks:
   - transform_llm_output
 provides_web_providers:
   - grounded-web
-python_dependencies:
-  - "trafilatura>=2.0,<3"
-  - "pypdf>=6.0,<7"
 config_schema:
   language:
     type: str

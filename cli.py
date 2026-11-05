@@ -21,7 +21,7 @@ import sys
 
 from . import compat, extract
 
-CRAWL4AI_REQUIREMENT = "crawl4ai>=0.9.5,<0.10"
+CRAWL4AI_REQUIREMENT = "crawl4ai>=0.9.1,<0.10"  # 0.9.0 and older need lxml 5: no Python 3.14 wheels
 TEST_PAGE = "https://www.iana.org/help/example-domains"
 SEARXNG_GUIDE = "https://hermes-agent.nousresearch.com/docs/user-guide/features/web-search"
 TEST_MISSING = "https://www.iana.org/grounded-web-test-page-that-does-not-exist"

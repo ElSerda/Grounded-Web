@@ -14,7 +14,6 @@ Order for one URL:
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import logging
 import os
@@ -151,18 +150,39 @@ def merge(main_text: str, browser_md: str) -> tuple[str, str]:
     return main_text[:MAX_CONTENT_CHARS], "trafilatura"
 
 
-def pdf_text(data: bytes) -> str:
-    from pypdf import PdfReader
+PDF_TIMEOUT = 60
+PDF_MEMORY_LIMIT = 1024 * 1024 * 1024  # POSIX only: Windows has no per-process limit to set
+PDF_READER = Path(__file__).with_name("pdf_reader.py")
 
-    reader = PdfReader(io.BytesIO(data))
-    parts = []
-    for i, page in enumerate(reader.pages, 1):
-        text = (page.extract_text() or "").strip()
-        if text:
-            parts.append(f"[page {i}]\n{text}")
-        if sum(len(p) for p in parts) > MAX_CONTENT_CHARS:
-            break
-    return "\n\n".join(parts)[:MAX_CONTENT_CHARS]
+
+def _limit_memory() -> None:  # runs in the child, before pypdf starts
+    import resource
+    resource.setrlimit(resource.RLIMIT_AS, (PDF_MEMORY_LIMIT, PDF_MEMORY_LIMIT))
+
+
+async def pdf_text_isolated(data: bytes) -> str:
+    """Text of a PDF, read by pdf_reader.py in a child process stopped after PDF_TIMEOUT seconds
+    (and, on POSIX, capped in memory).
+
+    pypdf keeps getting fixes for crafted PDFs that loop forever or exhaust memory, and web PDFs come
+    from anywhere: a bad one must not hang or bloat Hermes. Raises RuntimeError on failure or timeout.
+    """
+    kwargs = {} if os.name == "nt" else {"preexec_fn": _limit_memory}
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-I", str(PDF_READER), str(MAX_CONTENT_CHARS),
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        **kwargs,
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(data), PDF_TIMEOUT)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError(f"PDF reading stopped after {PDF_TIMEOUT}s") from None
+    if proc.returncode != 0:
+        last = (err.decode("utf-8", "replace").strip().splitlines() or ["no output"])[-1]
+        raise RuntimeError(last[:200])
+    return json.loads(out.decode("utf-8"))["text"]
 
 
 def html_text(html: str, url: str) -> tuple[str, str]:
@@ -269,7 +289,7 @@ async def _read_page(client, url: str, slots: asyncio.Semaphore | None = None) -
         if too_big:
             return Page(url, error=_origin(status, f"PDF larger than {MAX_PDF_BYTES // 2**20} MB"))
         try:
-            text = await asyncio.to_thread(pdf_text, body)
+            text = await pdf_text_isolated(body)
         except Exception as exc:  # noqa: BLE001
             return Page(url, error=_origin(status, f"unreadable PDF: {exc}"))
         return Page(url, url.rsplit("/", 1)[-1], text, "" if text else _origin(status, "PDF has no text layer (scanned?)"), "pdf")
