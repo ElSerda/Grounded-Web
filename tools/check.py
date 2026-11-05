@@ -37,7 +37,7 @@ def tests(python: str, cutoff: str) -> bool:
         if not run(["uv", "venv", "--quiet", "--python", python, str(venv)]):
             return False
         if not run(["uv", "pip", "install", "--quiet", "--python", str(venv), "--exclude-newer", cutoff,
-                    "-r", "pyproject.toml", "pytest"]):
+                    "-r", "pyproject.toml", "pytest", "firecrawl-anydoc"]):
             return False
         exe = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         return run([str(exe), "-m", "pytest", "tests", "-q"])

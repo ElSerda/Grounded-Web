@@ -1,8 +1,8 @@
-"""Reads web pages and PDFs on this machine, for web_extract.
+"""Reads web pages and documents (PDF, Office, EPUB) on this machine, for web_extract.
 
 Order for one URL:
   1. download it (HTTP errors such as 404 stop here, unless a browser can still open it);
-  2. PDF -> pypdf; HTML -> trafilatura (main text, short and clean);
+  2. documents -> anydoc, Hermes's own converter (Markdown, tables kept); HTML -> trafilatura;
   3. Crawl4AI, when its isolated environment is installed, renders the same page in a
      browser. trafilatura drops what it takes for page furniture, spec tables included, so
      the lines of Crawl4AI's output that hold values missing from trafilatura's text are
@@ -33,7 +33,7 @@ USER_AGENT = (
 FETCH_TIMEOUT = 25
 BROWSER_TIMEOUT = 60
 MAX_HTML_BYTES = 15 * 1024 * 1024
-MAX_PDF_BYTES = 50 * 1024 * 1024
+MAX_DOC_BYTES = 50 * 1024 * 1024  # Hermes's own anydoc limit (tools/read_extract.py)
 MAX_CONTENT_CHARS = 30_000  # what one page may hand to the model
 MAX_COMPLEMENT_CHARS = 8_000
 BROWSERS_AT_ONCE = 3  # each Crawl4AI call starts its own headless Chromium
@@ -150,43 +150,75 @@ def merge(main_text: str, browser_md: str) -> tuple[str, str]:
     return main_text[:MAX_CONTENT_CHARS], "trafilatura"
 
 
-PDF_TIMEOUT = 60
-PDF_MEMORY_LIMIT = 1024 * 1024 * 1024  # POSIX only: Windows has no per-process limit to set
-PDF_READER = Path(__file__).with_name("pdf_reader.py")
+DOC_TIMEOUT = 60
+DOC_MEMORY_LIMIT = 1024 * 1024 * 1024  # POSIX only: Windows has no per-process limit to set
+DOC_READER = Path(__file__).with_name("doc_reader.py")
+# What anydoc converts, by content type and by URL extension (Hermes's ANYDOC_EXTENSIONS).
+DOC_EXTENSIONS = (".pdf", ".doc", ".docx", ".docm", ".ppt", ".pptx", ".pptm", ".pps", ".ppsx", ".xls", ".xlsx",
+                  ".xlsm", ".xlsb", ".odt", ".ods", ".odp", ".rtf", ".epub")
+DOC_TYPES = ("application/pdf", "application/msword", "application/vnd.ms-", "application/vnd.openxmlformats",
+             "application/vnd.oasis.opendocument", "application/rtf", "text/rtf", "application/epub")
 
 
-def _limit_memory() -> None:  # runs in the child, before pypdf starts
+def is_document(url: str, ctype: str, body: bytes) -> bool:
+    path = url.lower().split("?")[0].split("#")[0]
+    return body[:5] == b"%PDF-" or any(t in ctype for t in DOC_TYPES) or path.endswith(DOC_EXTENSIONS)
+
+
+def _limit_memory() -> None:  # runs in the child, before anydoc starts
     import resource
-    resource.setrlimit(resource.RLIMIT_AS, (PDF_MEMORY_LIMIT, PDF_MEMORY_LIMIT))
+    resource.setrlimit(resource.RLIMIT_AS, (DOC_MEMORY_LIMIT, DOC_MEMORY_LIMIT))
 
 
-async def pdf_text_isolated(data: bytes) -> str:
-    """Text of a PDF, read by pdf_reader.py in a child process stopped after PDF_TIMEOUT seconds
-    (and, on POSIX, capped in memory).
+def ensure_doc_reader() -> None:
+    """Make anydoc importable: Hermes's `doc-extract` extra, the way its read_file tool does.
 
-    pypdf keeps getting fixes for crafted PDFs that loop forever or exhaust memory, and web PDFs come
-    from anywhere: a bad one must not hang or bloat Hermes. Raises RuntimeError on failure or timeout.
+    Raises RuntimeError when it cannot be installed (lazy installs off, offline...)."""
+    try:
+        import anydoc  # noqa: F401
+        return
+    except ImportError:
+        pass
+    try:
+        from pm import ensure_import
+        ensure_import("doc-extract")
+    except Exception as exc:  # noqa: BLE001 - pm.InstallError and friends
+        raise RuntimeError(f"Hermes's document converter is not installed: {exc}") from exc
+
+
+async def document_text_isolated(data: bytes) -> str:
+    """Markdown of a document, converted by doc_reader.py (anydoc) in a child process stopped after
+    DOC_TIMEOUT seconds (and, on POSIX, capped in memory). anydoc is native code and documents come
+    from anywhere: a crafted one must not hang, bloat or crash Hermes.
+
+    Raises RuntimeError with the reason when the document cannot be read.
     """
+    await asyncio.to_thread(ensure_doc_reader)
     kwargs = {} if os.name == "nt" else {"preexec_fn": _limit_memory}
     # Hermes runs a base interpreter and adds its package environment to sys.path at startup, so
     # the child gets the parent's import path explicitly (and no user site-packages: -s).
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p and os.path.isdir(p)),
            "PYTHONIOENCODING": "utf-8"}
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-s", str(PDF_READER), str(MAX_CONTENT_CHARS),
+        sys.executable, "-s", str(DOC_READER), str(MAX_CONTENT_CHARS),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         env=env, **kwargs,
     )
     try:
-        out, err = await asyncio.wait_for(proc.communicate(data), PDF_TIMEOUT)
+        out, err = await asyncio.wait_for(proc.communicate(data), DOC_TIMEOUT)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
-        raise RuntimeError(f"PDF reading stopped after {PDF_TIMEOUT}s") from None
+        raise RuntimeError(f"document reading stopped after {DOC_TIMEOUT}s") from None
     if proc.returncode != 0:
         last = (err.decode("utf-8", "replace").strip().splitlines() or ["no output"])[-1]
         raise RuntimeError(last[:200])
-    return json.loads(out.decode("utf-8"))["text"]
+    result = json.loads(out.decode("utf-8"))
+    if result.get("error"):
+        raise RuntimeError(result["error"])
+    if not result.get("text"):
+        raise RuntimeError("no text in the document")
+    return result["text"]
 
 
 def html_text(html: str, url: str) -> tuple[str, str]:
@@ -252,7 +284,7 @@ async def _browser_view(url: str) -> dict:
 async def _download(client, url: str):
     async with client.stream("GET", url) as response:
         chunks, size = [], 0
-        limit = MAX_PDF_BYTES
+        limit = MAX_DOC_BYTES
         async for chunk in response.aiter_bytes():
             chunks.append(chunk)
             size += len(chunk)
@@ -280,7 +312,7 @@ async def read_page(client, url: str, slots: asyncio.Semaphore | None = None) ->
 
 
 async def _read_page(client, url: str, slots: asyncio.Semaphore | None = None) -> Page:
-    browser = asyncio.create_task(browser_view(url, slots)) if not url.lower().split("?")[0].endswith(".pdf") else None
+    browser = None if is_document(url, "", b"") else asyncio.create_task(browser_view(url, slots))
     try:
         response, body, too_big = await _download(client, url)
         status, ctype = response.status_code, response.headers.get("content-type", "").lower()
@@ -290,16 +322,16 @@ async def _read_page(client, url: str, slots: asyncio.Semaphore | None = None) -
     else:
         fetch_error = f"HTTP {status} from origin" if status >= 400 else ""  # Hermes wording: no keyless rescue
 
-    if not fetch_error and ("pdf" in ctype or body[:5] == b"%PDF-"):
+    if not fetch_error and is_document(url, ctype, body):
         if browser:
             browser.cancel()
         if too_big:
-            return Page(url, error=_origin(status, f"PDF larger than {MAX_PDF_BYTES // 2**20} MB"))
+            return Page(url, error=_origin(status, f"document larger than {MAX_DOC_BYTES // 2**20} MB"))
         try:
-            text = await pdf_text_isolated(body)
+            text = await document_text_isolated(body)
         except Exception as exc:  # noqa: BLE001
-            return Page(url, error=_origin(status, f"unreadable PDF: {exc}"))
-        return Page(url, url.rsplit("/", 1)[-1], text, "" if text else _origin(status, "PDF has no text layer (scanned?)"), "pdf")
+            return Page(url, error=_origin(status, f"unreadable document: {exc}"))
+        return Page(url, url.rstrip("/").rsplit("/", 1)[-1], text, engine="anydoc")
 
     title, main = "", ""
     if not fetch_error:

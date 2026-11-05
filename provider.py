@@ -25,14 +25,14 @@ class GroundedWebProvider(WebSearchProvider):
 
     def is_available(self) -> bool:
         # No network here: runs on every `hermes tools` paint.
-        return all(importlib.util.find_spec(m) is not None for m in ("trafilatura", "pypdf", "httpx"))
+        return all(importlib.util.find_spec(m) is not None for m in ("trafilatura", "httpx"))
 
     def get_setup_schema(self) -> dict[str, Any]:
         """Row in the `hermes tools` picker (ProviderBase contract). No key, no service to configure."""
         return {
             "name": "grounded-web (local extraction)",
             "badge": "free · local · extract only",
-            "tag": "Pages and PDFs read on this machine; 404s and bot walls reported as errors. "
+            "tag": "Pages and documents (PDF, Office) read on this machine; 404s and bot walls reported as errors. "
                    "Pair with any search backend. Run `hermes grounded-web setup` for Crawl4AI.",
             "env_vars": [],
         }

@@ -109,7 +109,7 @@ def state() -> dict:
         "extract_backend": web.get("extract_backend") or web.get("backend") or "(auto)",
         "searxng_url": _secret("SEARXNG_URL"),
         "trafilatura": _has("trafilatura"),
-        "pypdf": _has("pypdf"),
+        "anydoc": _has("anydoc"),
         "ddgs": _has("ddgs"),
         "crawl4ai_python": c4ai,
         "chromium": browser.recorded(),
@@ -129,8 +129,9 @@ def print_state(s: dict, title: str = "grounded-web status") -> None:
         ok("Page reading       grounded-web")
     else:
         error(f"Page reading       {s['extract_backend']} (grounded-web is not selected)")
-    deps = s["trafilatura"] and s["pypdf"]
-    (ok if deps else error)("trafilatura, pypdf " + ("installed" if deps else "missing: run `hermes plugins enable grounded-web`"))
+    (ok if s["trafilatura"] else error)("trafilatura        " + ("installed" if s["trafilatura"] else "missing: run `hermes plugins enable grounded-web`"))
+    (ok if s["anydoc"] else warn)("Documents          " + ("anydoc (Hermes's converter) installed" if s["anydoc"]
+                                                       else "Hermes's converter not installed yet: run setup"))
     if search == "ddgs":
         (ok if s["ddgs"] else error)("DuckDuckGo (ddgs)  " + ("installed" if s["ddgs"] else "missing"))
     if s["crawl4ai_python"]:
@@ -327,11 +328,20 @@ def step_search(args, s: dict, interactive: bool) -> None:
 
 def step_extract(s: dict) -> None:
     header("2. Page reading")
-    info("web_extract reads pages and PDFs on this machine with grounded-web.")
+    info("web_extract reads pages and documents (PDF, Office, EPUB) on this machine with grounded-web.")
     if s["extract_backend"] == "grounded-web":
         ok("Page reading already on grounded-web")
     else:
         _set("web.extract_backend", "grounded-web")
+    if s["anydoc"]:
+        ok("Documents: Hermes's converter (anydoc) installed")
+        return
+    info("Documents use anydoc, the converter Hermes's read_file uses (its `doc-extract` extra).")
+    try:
+        extract.ensure_doc_reader()
+        ok("Documents: Hermes's converter (anydoc) installed")
+    except RuntimeError as exc:
+        warn(f"{exc}. Hermes installs it on the first document read when lazy installs are on.")
 
 
 def _find_chromium(interactive: bool):

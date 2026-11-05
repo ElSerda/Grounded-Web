@@ -1,4 +1,4 @@
-"""PDF reading in a child process: real text comes back, a stuck reader is stopped."""
+"""Document reading (anydoc, in a child process): real text comes back, a stuck reader is stopped."""
 
 import asyncio
 import importlib
@@ -13,7 +13,7 @@ from _pkg import load  # noqa: E402
 
 load()
 ex = importlib.import_module("grounded_web.extract")
-pytest.importorskip("pypdf")
+pytest.importorskip("anydoc")
 
 
 def tiny_pdf(text: str) -> bytes:
@@ -39,29 +39,36 @@ def tiny_pdf(text: str) -> bytes:
 
 
 def test_pdf_text_comes_back_from_the_child_process():
-    text = asyncio.run(ex.pdf_text_isolated(tiny_pdf("Total power 360 W")))
-    assert text.startswith("[page 1]") and "360 W" in text
+    text = asyncio.run(ex.document_text_isolated(tiny_pdf("Total power 360 W")))
+    assert "360 W" in text
 
 
 def test_a_stuck_reader_is_stopped(tmp_path, monkeypatch):
     stuck = tmp_path / "stuck.py"
     stuck.write_text("import time\ntime.sleep(30)\n")
-    monkeypatch.setattr(ex, "PDF_READER", stuck)
-    monkeypatch.setattr(ex, "PDF_TIMEOUT", 1)
+    monkeypatch.setattr(ex, "DOC_READER", stuck)
+    monkeypatch.setattr(ex, "DOC_TIMEOUT", 1)
     with pytest.raises(RuntimeError, match="stopped after 1s"):
-        asyncio.run(ex.pdf_text_isolated(b"%PDF-1.4"))
+        asyncio.run(ex.document_text_isolated(b"%PDF-1.4"))
 
 
 def test_a_broken_pdf_is_an_error_not_a_crash():
     with pytest.raises(RuntimeError):
-        asyncio.run(ex.pdf_text_isolated(b"%PDF-1.4 not really a pdf"))
+        asyncio.run(ex.document_text_isolated(b"%PDF-1.4 not really a pdf"))
 
 
 def test_child_finds_packages_from_the_parent_path(monkeypatch, tmp_path):
     # Hermes runs a base interpreter and adds its package environment to sys.path at startup:
-    # the child must import pypdf through the parent's path, not its interpreter's own packages.
+    # the child must import anydoc through the parent's path, not its interpreter's own packages.
     import venv
-    venv.create(tmp_path / "empty", with_pip=False)  # an interpreter that has no pypdf of its own
+    venv.create(tmp_path / "empty", with_pip=False)  # an interpreter that has no anydoc of its own
     bare = tmp_path / "empty" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     monkeypatch.setattr(ex.sys, "executable", str(bare))
-    assert "360 W" in asyncio.run(ex.pdf_text_isolated(tiny_pdf("Total power 360 W")))
+    assert "360 W" in asyncio.run(ex.document_text_isolated(tiny_pdf("Total power 360 W")))
+
+
+def test_documents_are_recognized_by_signature_type_or_extension():
+    assert ex.is_document("https://a.example/x", "", b"%PDF-1.7 ...")
+    assert ex.is_document("https://a.example/x", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", b"PK")
+    assert ex.is_document("https://a.example/report.epub?dl=1", "application/octet-stream", b"PK")
+    assert not ex.is_document("https://a.example/page.html", "text/html; charset=utf-8", b"<html>")
