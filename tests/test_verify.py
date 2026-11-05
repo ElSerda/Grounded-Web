@@ -99,5 +99,10 @@ def test_unicode_hyphen_in_units():
 
 
 def test_used_pages_are_reported():
-    report = verify.check("8K à 165 Hz.", [OFFICIAL, REVIEW])
+    report = verify.check("Bande passante : 1 344 Go/s.", [OFFICIAL, REVIEW])
     assert report.used == [OFFICIAL["url"]]
+
+
+def test_model_sizes_and_context_lengths_are_checked():
+    pages = [{"url": "https://models.example", "content": "Hermes 4 comes in 14B, 70B and 405B sizes with a 128K context."}]
+    assert missing("Sizes: 14B, 70B, 405B; context 128K; also a 7B.", pages) == ["7B"]

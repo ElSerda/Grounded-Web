@@ -48,6 +48,10 @@ _UNITS: dict[str, tuple[str, ...]] = {
     "µs": ("µs",),
     "fps": ("fps", "ips"),
     "tok/s": ("tok/s", "tokens/s"),
+    # Model sizes and context windows, as AI answers write them: 70B, 1.5B, 350M parameters, 128K tokens.
+    "b-params": ("b",),
+    "m-params": ("m",),
+    "k-tokens": ("k",),
     "%": ("%",),
 }
 _SPELLING_TO_UNIT = {s: u for u, spellings in _UNITS.items() for s in spellings}

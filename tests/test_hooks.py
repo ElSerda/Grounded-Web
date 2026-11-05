@@ -132,7 +132,7 @@ def test_sessions_do_not_share_pages():
     run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))], session="a")
     out = run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(REVIEW))], session="b")
     assert "maker.example" not in out
-    assert "⚠ 1 valeur chiffrée sur 1" in out
+    assert "⚠ La valeur chiffrée de la réponse ne figure pas dans les pages ouvertes : 360 W" in out
 
 
 def test_reminder_is_added_to_each_turn_and_can_be_turned_off():
@@ -174,3 +174,10 @@ def test_never_hides_the_sources():
     ctx = setup({"show_sources": "never", "verify": True})
     out = run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))])
     assert "maker.example" not in out and "✓" in out
+
+
+def test_single_missing_number_wording():
+    ctx = setup({"verify": True, "language": "en"})
+    page = {"url": "https://repo.example/releases", "content": "Release b12061 is out."}
+    out = run_turn(ctx, "The latest stable version is v0.5.2.", [("web_extract", extract_result(page))])
+    assert out.endswith("⚠ The number in this answer is not in the opened pages: v0.5.2")

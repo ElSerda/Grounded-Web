@@ -15,11 +15,13 @@ _TEXT = {
         "no_page": "No page could be read.",
         "all_one": "✓ The number in this answer appears in the opened pages.",
         "all_many": "✓ All {total} numbers in this answer appear in the opened pages.",
+        "missing_only": "⚠ The number in this answer is not in the opened pages: {items}",
         "missing_one": "⚠ 1 of the {total} numbers in this answer is not in the opened pages: {items}",
         "missing_many": "⚠ {n} of the {total} numbers in this answer are not in the opened pages: {items}",
         "conflict": "⚠ The pages give different values after “{context}”: {values}",
         "all_one_snippets": "✓ The number in this answer appears in the search snippets (no page was opened).",
         "all_many_snippets": "✓ All {total} numbers in this answer appear in the search snippets (no page was opened).",
+        "missing_only_snippets": "⚠ The number in this answer is not in the search snippets: {items}",
         "missing_one_snippets": "⚠ 1 of the {total} numbers in this answer is not in the search snippets: {items}",
         "missing_many_snippets": "⚠ {n} of the {total} numbers in this answer are not in the search snippets: {items}",
         "conflict_snippets": "⚠ The snippets give different values after “{context}”: {values}",
@@ -31,11 +33,13 @@ _TEXT = {
         "no_page": "Aucune page n'a pu être lue.",
         "all_one": "✓ La valeur chiffrée de la réponse figure dans les pages ouvertes.",
         "all_many": "✓ Les {total} valeurs chiffrées de la réponse figurent dans les pages ouvertes.",
+        "missing_only": "⚠ La valeur chiffrée de la réponse ne figure pas dans les pages ouvertes : {items}",
         "missing_one": "⚠ 1 valeur chiffrée sur {total} ne figure pas dans les pages ouvertes : {items}",
         "missing_many": "⚠ {n} valeurs chiffrées sur {total} ne figurent pas dans les pages ouvertes : {items}",
         "conflict": "⚠ Les pages donnent des valeurs différentes après « {context} » : {values}",
         "all_one_snippets": "✓ La valeur chiffrée de la réponse figure dans les extraits de recherche (aucune page ouverte).",
         "all_many_snippets": "✓ Les {total} valeurs chiffrées de la réponse figurent dans les extraits de recherche (aucune page ouverte).",
+        "missing_only_snippets": "⚠ La valeur chiffrée de la réponse ne figure pas dans les extraits de recherche : {items}",
         "missing_one_snippets": "⚠ 1 valeur chiffrée sur {total} ne figure pas dans les extraits de recherche : {items}",
         "missing_many_snippets": "⚠ {n} valeurs chiffrées sur {total} ne figurent pas dans les extraits de recherche : {items}",
         "conflict_snippets": "⚠ Les extraits donnent des valeurs différentes après « {context} » : {values}",
@@ -119,7 +123,8 @@ def build(opened: list[str], searched: bool, report: Report | None, lang: str, s
             lines.append(t[("all_one" if total == 1 else "all_many") + suffix].format(total=total))
         else:
             items = ", ".join(f.text for f in report.missing)
-            lines.append(t[("missing_one" if n == 1 else "missing_many") + suffix].format(n=n, total=total, items=items))
+            key = "missing_only" if total == 1 else "missing_one" if n == 1 else "missing_many"
+            lines.append(t[key + suffix].format(n=n, total=total, items=items))
         for c in report.conflicts:
             values = ", ".join(f"{v} ({_site(u)})" for u, v in c.found.items())
             lines.append(t["conflict" + suffix].format(context=c.context, values=values))
