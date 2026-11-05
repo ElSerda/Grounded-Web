@@ -48,12 +48,26 @@ OCR_RUNNER = Path(__file__).with_name("ocr_runner.py")
 OCR_MAX_PAGES = 30
 OCR_TIMEOUT = 180  # rendering and reading 30 pages on a CPU stays well below this
 
-# Bot walls and challenge pages: never real content, whatever the page length.
+# Bot walls and challenge pages. Phrases only a challenge page uses count anywhere near the top,
+# whatever the page length; words an article about the topic also uses ("captcha", "access
+# denied") count only on a short page (title included): a long page about the topic is content.
 _WALL_RE = re.compile(
-    r"\b(?:just a moment|attention required|checking your browser|verify(?:ing)? you are (?:a )?human|"
-    r"are you a (?:robot|human)|captcha|bot check|automated (?:bot|access|traffic)|drag the handle|"
+    r"\b(?:just a moment\.\.\.|attention required!?\s*\|\s*cloudflare|checking (?:if the site connection is secure|your browser)|"
+    r"verify(?:ing)? you are (?:a )?human|are you a (?:robot|human)\?|bot check in progress|"
+    r"automated (?:bot check|access to this page)|drag the handle|ddos protection by|"
+    r"please enable (?:javascript|cookies) (?:and|to continue)|enable javascript and cookies to continue)",
+    re.IGNORECASE,
+)
+_WALL_WORDS_RE = re.compile(
+    r"\b(?:just a moment|attention required|captcha|bot check|automated (?:bot|access|traffic)|"
     r"ddos protection|security check|unusual traffic|access denied|accès refusé|request blocked|"
     r"please enable (?:javascript|cookies))\b",
+    re.IGNORECASE,
+)
+# What the HTML head says about a page: an article (og:type article, a publication date, an
+# <article> element) is content, never an error page, whatever its title or text.
+_ARTICLE_RE = re.compile(
+    r"<meta[^>]+(?:property|name)=[\"'](?:og:type[\"'][^>]+content=[\"']article|article:published_time)|<article[\s>]",
     re.IGNORECASE,
 )
 # Error pages: only when the page is short, since articles mention these words too. A bare 404 or
@@ -93,10 +107,24 @@ class Page:
 # ---------------------------------------------------------------- pure helpers
 
 
-def looks_blocked(title: str, text: str) -> str:
-    """A reason when the page reads like a bot wall or an error page, else an empty string."""
+def looks_blocked(title: str, text: str, headers: dict | None = None, html: str = "") -> str:
+    """A reason when an HTTP 200 page is really a bot wall or an error page, else an empty string.
+
+    The HTTP status already caught real errors (404, 403...). This is for pages that answer 200:
+    the response headers first (Cloudflare marks its challenges), then the HTML head (an article
+    is content), then the text, where only a challenge page's own phrases count anywhere and the
+    words an article could also use count only on a short page. Without `html` (a
+    result from another backend), the text alone is judged, with the same limits.
+    """
+    headers = {k.lower(): str(v).lower() for k, v in (headers or {}).items()}
+    if headers.get("cf-mitigated") == "challenge":
+        return "bot wall (Cloudflare challenge, cf-mitigated header)"
+    short = len(text) < SHORT_PAGE_CHARS
     m = _WALL_RE.search(f"{title}\n{text[:600]}")
-    if not m and len(text) < SHORT_PAGE_CHARS:
+    article = bool(html) and bool(_ARTICLE_RE.search(html[:200_000]))
+    if not m and short and not article:
+        m = _WALL_WORDS_RE.search(f"{title}\n{text[:600]}")
+    if not m and short and not article:
         m = _ERROR_RE.search(f"{title}\n{text[:300]}")
     if not m:
         return ""
@@ -452,9 +480,10 @@ async def _read_page(client, url: str, slots: asyncio.Semaphore | None = None) -
             return Page(url, error=_origin(status, f"unreadable document: {exc}"))
         return Page(url, name, text, engine="anydoc")
 
-    title, main = "", ""
+    title, main, html, headers = "", "", "", {}
     if not fetch_error:
         html = body[:MAX_HTML_BYTES].decode(response.encoding or "utf-8", "replace")
+        headers = dict(response.headers)
         title, main = await asyncio.to_thread(html_text, html, url)
 
     view = await browser if browser else {"success": False}
@@ -465,9 +494,9 @@ async def _read_page(client, url: str, slots: asyncio.Semaphore | None = None) -
     view_title = (view.get("title") or "") if view_ok else ""
     # Judge each view on its own: a bot wall in one must not pass by riding on the other's text.
     blocked = ""
-    if main and (reason := looks_blocked(title, main)):
+    if main and (reason := looks_blocked(title, main, headers, html)):
         main, blocked = "", reason
-    if browser_md and (reason := looks_blocked(view_title, strip_links(browser_md))):
+    if browser_md and (reason := looks_blocked(view_title, strip_links(browser_md), headers, html)):
         browser_md, blocked = "", reason
     content, engine = merge(main, browser_md)
     title = title or view_title

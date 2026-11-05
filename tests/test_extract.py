@@ -103,3 +103,32 @@ def test_page_failures_use_hermes_origin_wording():
     assert ex._origin(200, "error or block page").startswith("HTTP 200 from origin: ")
     assert ex._origin(0, "x").startswith("HTTP 200 from origin")
     assert ex._origin(403, "bot wall").startswith("HTTP 403 from origin: ")
+
+
+ARTICLE_HEAD = '<html><head><meta property="og:type" content="article"><title>Error 404</title></head><body><article>'
+
+
+def test_a_troll_post_titled_error_404_is_content():
+    text = "Error 404: my motivation was not found this morning. Coffee fixed it."
+    assert ex.looks_blocked("Error 404", text, {}, ARTICLE_HEAD + text + "</article>") == ""
+
+
+def test_an_article_about_captchas_or_access_denied_is_content():
+    text = ("Access denied, captcha, security check: why websites test you. " + "A long explanation. " * 120)
+    assert ex.looks_blocked("Why websites test you", text) == ""  # long page, words not in the title
+    head = '<html><head><meta property="article:published_time" content="2026-01-01"></head>'
+    assert ex.looks_blocked("Access denied: a short story", "A tale.", {}, head) == ""  # an article says so
+
+
+def test_a_cloudflare_challenge_header_is_a_wall_whatever_the_text():
+    assert ex.looks_blocked("Docs", "Real looking text. " * 200, {"CF-Mitigated": "challenge"})
+
+
+def test_challenge_phrases_still_count_on_long_pages_but_plain_words_do_not():
+    assert ex.looks_blocked("Example", "Checking your browser before accessing example.com. " + "x " * 2000)
+    assert ex.looks_blocked("Example", "We added a captcha to the sign-up form. " + "More text. " * 300) == ""
+
+
+def test_a_long_page_about_captchas_keeps_its_title():
+    assert ex.looks_blocked("CAPTCHA - Wikipedia", "A CAPTCHA is a type of challenge-response test. " * 60) == ""
+    assert ex.looks_blocked("Access Denied", "You don't have permission to access this server.")  # short: a wall
