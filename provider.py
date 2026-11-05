@@ -51,4 +51,5 @@ class GroundedWebProvider(WebSearchProvider):
         except Exception as exc:  # noqa: BLE001 - whole-call failure, reported on every URL
             error = f"grounded-web could not read the pages: {exc}"[:300]
             return [{"url": u, "title": "", "content": "", "error": error} for u in urls]
-        return [p.as_result() for p in pages]
+        from .focus import take
+        return [p.as_result(*(take(p.url) or (None, 0))) for p in pages]

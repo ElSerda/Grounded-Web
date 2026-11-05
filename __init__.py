@@ -2,6 +2,9 @@
 
 Hooks only, no extra model call:
   pre_llm_call          starts a fresh record for the turn and adds a one-sentence reminder
+  pre_tool_call         sends back a web_extract call that asks for several URLs at once (one URL
+                        per call keeps each page within a small model's context), and notes the
+                        question so a long page has its relevant passages first (focus.py)
   post_tool_call        keeps the text of every page web_extract returned, for the whole session
   transform_llm_output  appends the opened pages to the answer (append-only,
                         so a streamed answer is not reprinted)
@@ -15,7 +18,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Optional
 
-from . import compat, footer, values
+from . import compat, focus, footer, values
 
 # Page text is kept in memory per session, so an answer can rely on a page opened in an
 # earlier turn. Bounded: oldest pages, then oldest sessions, are dropped first. (Hermes's
@@ -26,6 +29,7 @@ MAX_SESSIONS = 20
 _lock = threading.Lock()
 _turns: dict[str, dict[str, Any]] = {}
 _sessions: "OrderedDict[str, OrderedDict[str, tuple[str, str]]]" = OrderedDict()  # url -> (title, text)
+_questions: "OrderedDict[str, list[str]]" = OrderedDict()  # session -> user message, then search queries
 _ctx = None
 
 
@@ -74,10 +78,14 @@ REMINDER = (
 )
 
 
-def _start_turn(session_id: str = "", **_: Any) -> Optional[str]:
+def _start_turn(session_id: str = "", user_message: Any = "", **_: Any) -> Optional[str]:
     # An interrupted turn never reaches the transform hook, so its record is dropped here.
     with _lock:
         _turns.pop(session_id, None)
+        _questions[session_id] = [str(user_message or "")[:2000]]
+        _questions.move_to_end(session_id)
+        while len(_questions) > MAX_SESSIONS:
+            _questions.popitem(last=False)
     return REMINDER if _setting("remind", True) else None
 
 
@@ -92,9 +100,42 @@ def _remember(session_id: str, url: str, title: str, content: str) -> None:
         _sessions.popitem(last=False)
 
 
-def _record_tool(tool_name: str = "", result: Any = None, session_id: str = "", **_: Any) -> None:
+def _urls(args: Any) -> list[str]:
+    urls = (args or {}).get("urls") if isinstance(args, dict) else None
+    if isinstance(urls, str):
+        return [urls]
+    return [str(u) for u in urls or [] if u]
+
+
+def _guard_tool(tool_name: str = "", args: Any = None, session_id: str = "", **_: Any) -> Optional[dict]:
+    if tool_name != "web_extract":
+        return None
+    urls = _urls(args)
+    if len(urls) > 1 and _setting("one_url_per_call", True):
+        return {"action": "block", "message": (
+            f"grounded-web: web_extract takes one URL per call, so each page fits in your context. "
+            f"Call web_extract with urls=[\"{urls[0]}\"] now, then each other URL in its own call.")}
+    if urls and _setting("focus", True):
+        with _lock:
+            texts = list(_questions.get(session_id, []))
+        limit = (args or {}).get("char_limit") if isinstance(args, dict) else None
+        try:
+            window = max(2_000, min(int(limit), 500_000)) if limit is not None else focus.hermes_window()
+        except (TypeError, ValueError):
+            window = focus.hermes_window()
+        focus.expect(urls[0], focus.terms_of(*texts), window)
+    return None
+
+
+def _record_tool(tool_name: str = "", result: Any = None, session_id: str = "", args: Any = None,
+                 **_: Any) -> None:
     if tool_name not in ("web_search", "web_extract"):
         return
+    if tool_name == "web_search" and isinstance(args, dict) and args.get("query"):
+        with _lock:
+            texts = _questions.setdefault(session_id, [""])
+            texts.append(str(args["query"])[:300])
+            del texts[1:-3]  # the user's message and the last three queries
     pages = _pages(result) if tool_name == "web_extract" else []
     with _lock:
         turn = _turns.setdefault(session_id, {"opened": [], "searched": False})
@@ -133,6 +174,7 @@ def register(ctx) -> None:
     global _ctx
     _ctx = ctx
     ctx.register_hook("pre_llm_call", _start_turn)
+    ctx.register_hook("pre_tool_call", _guard_tool)
     ctx.register_hook("post_tool_call", _record_tool)
     ctx.register_hook("transform_llm_output", _append_footer)
     skills = Path(__file__).parent / "skills"

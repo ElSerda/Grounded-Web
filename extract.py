@@ -35,6 +35,8 @@ BROWSER_TIMEOUT = 60
 MAX_HTML_BYTES = 15 * 1024 * 1024
 MAX_DOC_BYTES = 50 * 1024 * 1024  # Hermes's own anydoc limit (tools/read_extract.py)
 MAX_CONTENT_CHARS = 30_000  # what one page may hand to the model
+# What a page is read up to, before focus.arrange() picks what comes first and the cut above.
+READ_CHARS = 400_000
 MAX_COMPLEMENT_CHARS = 8_000
 BROWSERS_AT_ONCE = 3  # each Crawl4AI call starts its own headless Chromium
 SHORT_PAGE_CHARS = 1_500
@@ -70,8 +72,15 @@ class Page:
     error: str = ""
     engine: str = ""
 
-    def as_result(self) -> dict:
-        out = {"url": self.url, "title": self.title, "content": self.content, "raw_content": self.content,
+    def as_result(self, terms: list[str] | None = None, window: int = 0) -> dict:
+        """The provider's dict for this page, cut to MAX_CONTENT_CHARS; with `terms`, a long page
+        has its passages about them first (focus.arrange)."""
+        text = self.content
+        if terms and not self.error:
+            from .focus import arrange
+            text = arrange(text, terms, window or 15_000)
+        text = text[:MAX_CONTENT_CHARS]
+        out = {"url": self.url, "title": self.title, "content": text, "raw_content": text,
                "metadata": {"engine": self.engine} if self.engine else {}}
         if self.error:
             out["error"] = self.error
@@ -148,11 +157,11 @@ def merge(main_text: str, browser_md: str) -> tuple[str, str]:
     """(content, engine) from trafilatura's text and Crawl4AI's markdown."""
     browser_text = strip_links(browser_md) if browser_md else ""
     if len(main_text.strip()) < 300 and browser_text:
-        return browser_text[:MAX_CONTENT_CHARS], "crawl4ai"
+        return browser_text[:READ_CHARS], "crawl4ai"
     extra = complement(main_text, browser_md) if browser_md else ""
     if extra:
-        return f"{main_text}\n\n## More values from this page (browser view)\n{extra}"[:MAX_CONTENT_CHARS], "trafilatura+crawl4ai"
-    return main_text[:MAX_CONTENT_CHARS], "trafilatura"
+        return f"{main_text}\n\n## More values from this page (browser view)\n{extra}"[:READ_CHARS], "trafilatura+crawl4ai"
+    return main_text[:READ_CHARS], "trafilatura"
 
 
 DOC_TIMEOUT = 60
@@ -248,7 +257,7 @@ async def document_text_isolated(data: bytes, fmt: str | None = None) -> str:
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p and os.path.isdir(p)),
            "PYTHONIOENCODING": "utf-8", **DOC_CHILD_ENV}
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-s", str(DOC_READER), str(MAX_CONTENT_CHARS), fmt or "",
+        sys.executable, "-s", str(DOC_READER), str(READ_CHARS), fmt or "",
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         env=env, **kwargs,
     )
@@ -299,7 +308,7 @@ async def ocr_isolated(data: bytes, pages: list[int]) -> str:
     wanted = pages[:OCR_MAX_PAGES]
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     proc = await asyncio.create_subprocess_exec(
-        str(python), "-I", str(OCR_RUNNER), ",".join(str(p) for p in wanted), str(MAX_CONTENT_CHARS),
+        str(python), "-I", str(OCR_RUNNER), ",".join(str(p) for p in wanted), str(READ_CHARS),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
     )
     try:
@@ -320,7 +329,7 @@ async def ocr_isolated(data: bytes, pages: list[int]) -> str:
     if skipped:
         note += f" [Pages {_page_list(skipped)} were not read: OCR stops at {OCR_MAX_PAGES} pages.]"
     body = "\n\n".join(f"[page {n}]\n{text}" for n, text in sorted(read.items()))
-    return f"{note}\n\n{body}"[:MAX_CONTENT_CHARS]
+    return f"{note}\n\n{body}"[:READ_CHARS]
 
 
 def html_text(html: str, url: str) -> tuple[str, str]:

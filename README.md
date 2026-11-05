@@ -6,6 +6,7 @@ A Hermes Agent plugin for web answers built from pages that were really read.
 - **Reports 404s, error pages and bot walls as errors**, so the model never takes them for content.
 - **Lists the pages the answer really used**, under the answer, with clickable links. Pages are taken from the tool results, never from the model's text, so the list cannot name a page that was not read.
 - **Pushes the model to open pages** instead of answering from search snippets: a bundled skill and a one-sentence reminder.
+- **Keeps long pages useful to small models**: one URL per `web_extract` call, and on a page longer than what Hermes shows the model, the passages about the question come first. See [What the model sees of a long page](#what-the-model-sees-of-a-long-page).
 
 A real run, fully local: Gemma 4 E4B in LM Studio, DuckDuckGo search, pages read by grounded-web.
 
@@ -45,6 +46,26 @@ grounded-web fixes the first two, pushes against the third, and shows which page
 4. Bot walls ("Just a moment...", "Automated bot check") and short error pages that answer HTTP 200 are reported as errors, in Hermes's `HTTP <code> from origin: ...` form. Hermes then does not re-fetch them through its keyless rescue (an outside service that can return the same wall as content), and a wall that another backend returns is never listed as a source.
 
 Each page is capped at 30,000 characters.
+
+## What the model sees of a long page
+
+This is a limit of Hermes's `web_extract` that every extraction backend runs into. Small local models and models with a short context feel it most.
+
+**The window.** Hermes shows the model at most `web.extract_char_limit` characters of each page: 15,000 by default, whichever backend read it. On a longer page the model gets the first 75% and the last 25% of that window. The middle is saved to a file under `HERMES_HOME/cache/web`, with a note that `read_file` can page through it. Small models rarely do. So on a long document the answer is often in the part the model never sees.
+
+A real case, on Hermes 0.22.7 with Ministral 3 3B: asked for the RTX 5080's specs, the model opened NVIDIA's Blackwell white paper. The first 11,000 characters describe the GB202 chip of the RTX 5090; the RTX 5080 table is in an appendix, 60,000 characters further. The model saw only RTX 5090 figures and gave them as the RTX 5080's.
+
+**Several URLs in one call.** Each page gets its own window, but they all land in one tool result. Above a share of the context window (15%, about 19,700 characters with a 32K context), Hermes replaces a whole tool result with a 1,500-character preview, and the model is left with almost nothing.
+
+**What grounded-web does about it:**
+
+- **One URL per call.** A `web_extract` call that asks for several URLs is sent back (Hermes's `pre_tool_call` hook), with a message telling the model to call again with the first URL, then each other one in its own call. Small models follow it. It costs one round trip, only when the model asks for several URLs at once. Setting: `one_url_per_call`.
+- **Relevant passages first.** grounded-web knows the question: the user's message and the model's search queries. On a page longer than the window, it moves the passages that mention the question's terms to the top. Rare terms weigh more than terms found all over the page, tables of contents are skipped, and a table split by a page break stays whole. A note tells the model this was done, and the rest of the page follows in its original order. Nothing is removed. In the case above, the full RTX 5080 table moves into the window. Setting: `focus`.
+- Pages are read up to 400,000 characters and handed to Hermes cut at 30,000 characters, after this reordering.
+
+**What you can do:** with a model that has room, raise the window, for example `hermes config set web.extract_char_limit 30000` (two pages then take about 16,000 tokens). Keep the default with a small context.
+
+**For Hermes:** the window is a fixed head and tail. Picking it from the question, as grounded-web does, would help every backend. The query is not passed to extract providers today (`extract(urls, **kwargs)`), which is why grounded-web reads it from hooks.
 
 ## Which pages are listed
 
@@ -103,18 +124,20 @@ Under Settings → Plugins in Hermes Desktop, or `plugins.entries.grounded-web.s
 | `language` | `auto` | Footer language: `auto` (Hermes's `display.language`; English for languages other than en/fr), `answer` (the reply's language), `en` or `fr` |
 | `show_sources` | `auto` | `auto`: list the opened pages, unless another plugin also rewrites replies (see below). `always`: list them anyway. `never`: no list |
 | `remind` | `true` | Add one sentence to each user message (about 50 tokens): search snippets are not sources, open the pages |
+| `one_url_per_call` | `true` | Send back a `web_extract` call that asks for several URLs, with a message to call them one by one |
+| `focus` | `true` | On a page longer than what Hermes shows the model, put the passages about the question first (nothing is removed) |
 
 Search and page reading are separate settings: grounded-web only reads pages. It works with any search backend.
 
 ## What it does, for review
 
-- **Hooks:** `pre_llm_call` (starts a record for the turn and, unless `remind` is off, appends the one-sentence reminder to the user message), `post_tool_call` (keeps the text of `web_extract` results), `transform_llm_output` (appends the footer; the answer itself is not changed, so a streamed answer is not printed twice).
+- **Hooks:** `pre_llm_call` (starts a record for the turn, notes the user's message for `focus` and, unless `remind` is off, appends the one-sentence reminder to the user message), `pre_tool_call` (only for `web_extract`: blocks a call with several URLs when `one_url_per_call` is on, and notes which question the page is read for), `post_tool_call` (keeps the text of `web_extract` results and the `web_search` query), `transform_llm_output` (appends the footer; the answer itself is not changed, so a streamed answer is not printed twice).
 - **Web provider:** `grounded-web`, extract only.
 - **CLI:** `hermes grounded-web status|setup|uninstall`.
 - **Skill:** `grounded-web:web-research`, read-only, loaded only if you auto-load it or call it.
 - **Network:** downloads the URLs the agent asks `web_extract` to read, directly from this machine with a desktop browser user agent. `setup` also checks the SearXNG URL you give it and reads two test pages on iana.org; with OCR chosen, RapidOCR downloads its models once from modelscope.cn (SHA-256 checked). Crawl4AI's browser loads the same URLs and their page assets.
 - **Processes:** one Crawl4AI child process per page, at most three at once, each stopped after 60 seconds; it starts Hermes's Chromium headless (DevTools port on 127.0.0.1, temporary profile) and stops it before exiting; one child process per document (Hermes's own Python running `doc_reader.py` with anydoc), stopped after 60 seconds; for a scanned PDF with OCR installed, one more child process (`ocr_runner.py` in the OCR environment), stopped after 180 seconds.
-- **Writes:** `web.search_backend`, `web.extract_backend`, `skills.auto_load` and, for SearXNG, `SEARXNG_URL` in `.env`, all through Hermes's own config functions and only during `setup` and `uninstall`; the values `setup` replaced, in `HERMES_HOME/plugin-data/grounded-web/previous.json`; the Chromium path, in `browser.json` next to it. Nothing else is stored: page text lives in memory only, for at most 30 pages per conversation and 20 conversations, and is gone when Hermes stops.
+- **Writes:** `web.search_backend`, `web.extract_backend`, `skills.auto_load` and, for SearXNG, `SEARXNG_URL` in `.env`, all through Hermes's own config functions and only during `setup` and `uninstall`; the values `setup` replaced, in `HERMES_HOME/plugin-data/grounded-web/previous.json`; the Chromium path, in `browser.json` next to it. Nothing else is stored: page text lives in memory only, for at most 30 pages per conversation and 20 conversations, and so do the last user message and search queries of each conversation (for `focus`); all of it is gone when Hermes stops.
 - **Reads:** the `plugin.yaml` of other installed plugins, to find reply rewriters; `hermes pm env chromium` and `browser.executable_path`, during `setup`, to find Hermes's Chromium.
 - **No telemetry**, no credentials read, no self-update.
 
@@ -127,6 +150,7 @@ Hermes runs every plugin's `transform_llm_output` hook but keeps only the first 
 - The footer says which pages the answer was built from. It does not check that each sentence of the answer matches them: that would take another model call per reply and still not be reliable.
 - An earlier page is matched on values with a unit, a price or a version; an answer that reuses only its prose is not linked to it.
 - Pages behind logins or strong bot protection cannot be read; they come back as errors.
+- `focus` matches words, not meaning: a question worded differently from the page (a synonym, another language) may move nothing, and the page then reaches the model as before. The model can still page through the full text with `read_file`.
 
 ## Dependencies
 
