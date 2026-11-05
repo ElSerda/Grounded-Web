@@ -21,7 +21,48 @@ from . import extract
 CRAWL4AI_REQUIREMENT = "crawl4ai>=0.9.5,<0.10"
 TEST_PAGE = "https://www.iana.org/help/example-domains"
 SEARXNG_GUIDE = "https://hermes-agent.nousresearch.com/docs/user-guide/features/web-search"
-TEST_MISSING ="https://www.iana.org/grounded-web-test-page-that-does-not-exist"
+TEST_MISSING = "https://www.iana.org/grounded-web-test-page-that-does-not-exist"
+
+
+# ---------------------------------------------------------------- output, in Hermes's own style
+
+
+def _hermes_out(name: str):
+    """Hermes's setup output helper `name`, or None when this Hermes does not have it."""
+    try:
+        if name == "print_header":
+            from hermes_cli.setup import print_header as fn
+        else:
+            import hermes_cli.cli_output as out
+            fn = getattr(out, name)
+        return fn
+    except (ImportError, AttributeError):
+        return None
+
+
+def header(text: str) -> None:
+    fn = _hermes_out("print_header")
+    fn(text) if fn else print(f"\n== {text}")
+
+
+def info(text: str) -> None:
+    fn = _hermes_out("print_info")
+    fn(text) if fn else print(f"  {text}")
+
+
+def ok(text: str) -> None:
+    fn = _hermes_out("print_success")
+    fn(text) if fn else print(f"OK {text}")
+
+
+def warn(text: str) -> None:
+    fn = _hermes_out("print_warning")
+    fn(text) if fn else print(f"!  {text}")
+
+
+def error(text: str) -> None:
+    fn = _hermes_out("print_error")
+    fn(text) if fn else print(f"X  {text}")
 
 
 # ---------------------------------------------------------------- reading the current state
@@ -74,20 +115,28 @@ def state() -> dict:
     }
 
 
-def _yes(flag: bool) -> str:
-    return "yes" if flag else "no"
-
-
-def print_state(s: dict) -> None:
-    print("grounded-web status")
-    print(f"  search backend      {s['search_backend']}")
-    print(f"  extract backend     {s['extract_backend']}" + ("" if s["extract_backend"] == "grounded-web" else "   (grounded-web not selected)"))
-    print(f"  SEARXNG_URL         {s['searxng_url'] or '(not set)'}")
-    print(f"  trafilatura, pypdf  {_yes(s['trafilatura'])}, {_yes(s['pypdf'])}")
-    print(f"  DuckDuckGo (ddgs)   {_yes(s['ddgs'])}")
-    print(f"  Crawl4AI            {s['crawl4ai_python'] or 'not installed (pages are read with trafilatura only)'}")
+def print_state(s: dict, title: str = "grounded-web status") -> None:
+    header(title)
+    search = s["search_backend"]
+    if search == "(auto)":
+        warn("Search             (auto): Hermes picks a backend from your environment variables")
+    else:
+        ok(f"Search             {search}")
+    if search == "searxng" or s["searxng_url"]:
+        (ok if s["searxng_url"] else error)(f"SEARXNG_URL        {s['searxng_url'] or '(not set)'}")
+    if s["extract_backend"] == "grounded-web":
+        ok("Page reading       grounded-web")
+    else:
+        error(f"Page reading       {s['extract_backend']} (grounded-web is not selected)")
+    deps = s["trafilatura"] and s["pypdf"]
+    (ok if deps else error)("trafilatura, pypdf " + ("installed" if deps else "missing: run `hermes plugins enable grounded-web`"))
+    if search == "ddgs":
+        (ok if s["ddgs"] else error)("DuckDuckGo (ddgs)  " + ("installed" if s["ddgs"] else "missing"))
     if s["crawl4ai_python"]:
-        print(f"  headless Chromium   {_yes(s['browser'])}")
+        ok("Crawl4AI           installed")
+        (ok if s["browser"] else error)("Headless Chromium  " + ("installed" if s["browser"] else "missing: run setup again"))
+    else:
+        warn("Crawl4AI           not installed (pages are read with trafilatura only)")
 
 
 # ---------------------------------------------------------------- asking
@@ -160,7 +209,7 @@ def _check_searxng(url: str) -> str:
 
 
 def step_search(args, s: dict, interactive: bool) -> None:
-    print("\n1. Search backend")
+    header("1. Search backend")
     options = [
         ("ddgs", "DuckDuckGo: built into Hermes, no key, no server"),
         ("searxng", "SearXNG: your own instance (self-hosted, many engines)"),
@@ -172,14 +221,14 @@ def step_search(args, s: dict, interactive: bool) -> None:
         default = "searxng" if s["searxng_url"] else "ddgs"
         choice = _choose("Search backend for web_search", options, default, interactive,
                          "grounded-web reads pages; search comes from one of these.")
-    print(f"   {dict(options)[choice]}")
+    info(dict(options)[choice])
     if choice == "keep":
         return
     if choice == "searxng":
         url = args.searxng_url or _ask("   SearXNG URL?", s["searxng_url"] or "http://localhost:8080", interactive)
         while (problem := _check_searxng(url)):
-            print(f"   ! {problem}")
-            print(f"   No SearXNG yet? Hermes's guide runs one with Docker: {SEARXNG_GUIDE}")
+            error(problem)
+            info(f"No SearXNG yet? Hermes's guide runs one with Docker: {SEARXNG_GUIDE}")
             # Never leave search unset without saying so: DuckDuckGo is the safe default.
             fallback = "save" if args.searxng_url and not interactive else "ddgs"
             what = _choose("SearXNG is not answering. What now?", [
@@ -192,14 +241,14 @@ def step_search(args, s: dict, interactive: bool) -> None:
                 url = _ask("   SearXNG URL?", url, interactive)
                 continue
             if what == "keep":
-                print(f"   Search backend unchanged: {s['search_backend']}")
+                warn(f"Search backend unchanged: {s['search_backend']}")
                 return
             if what == "ddgs":
-                print("   Using DuckDuckGo instead. Run setup again once SearXNG is up.")
+                warn("Using DuckDuckGo instead. Run setup again once SearXNG is up.")
                 choice = "ddgs"
             break
         else:
-            print("   SearXNG answers JSON searches.")
+            ok("SearXNG answers JSON searches")
         if choice == "searxng":
             from hermes_cli.config import save_env_value
             save_env_value("SEARXNG_URL", url.rstrip("/"))
@@ -207,81 +256,93 @@ def step_search(args, s: dict, interactive: bool) -> None:
             return
     if choice == "ddgs":
         if not s["ddgs"]:
-            print("   DuckDuckGo needs Hermes's `ddgs` extra.")
+            info("DuckDuckGo needs Hermes's `ddgs` extra.")
             if not _confirm("Install Hermes's ddgs extra now?", True, interactive,
                             "DuckDuckGo search runs through the ddgs package, which Hermes installs on request."):
                 return
             from pm import ensure_import
             ensure_import("ddgs")
-        _set("web.search_backend", "ddgs")
+        if s["search_backend"] == "ddgs":
+            ok("Search backend already ddgs")
+        else:
+            _set("web.search_backend", "ddgs")
     else:
-        print(f"   Unknown choice {choice!r}, search backend unchanged.")
+        warn(f"Unknown choice {choice!r}, search backend unchanged.")
 
 
 def step_extract(s: dict) -> None:
-    print("\n2. Page reading")
-    if s["extract_backend"] != "grounded-web":
+    header("2. Page reading")
+    info("web_extract reads pages and PDFs on this machine with grounded-web.")
+    if s["extract_backend"] == "grounded-web":
+        ok("Page reading already on grounded-web")
+    else:
         _set("web.extract_backend", "grounded-web")
-    print("   web_extract reads pages and PDFs on this machine with grounded-web.")
 
 
 def step_crawl4ai(args, s: dict, interactive: bool) -> None:
-    print("\n3. Crawl4AI (optional)")
-    print("   Opens each page in a headless browser as well. It recovers values that the main")
-    print("   text reader drops (spec tables) and pages built by scripts. It lives in its own")
-    print("   environment, apart from Hermes's packages: about 35 packages and a 280 MB")
-    print("   headless Chromium in Playwright's browser folder.")
+    header("3. Crawl4AI (optional)")
+    info("Opens each page in a headless browser as well. It recovers values that the main")
+    info("text reader drops (spec tables) and pages built by scripts. It lives in its own")
+    info("environment, apart from Hermes's packages: about 35 packages and a 280 MB")
+    info("headless Chromium in Playwright's browser folder.")
     if s["crawl4ai_python"] and s["browser"]:
-        print("   Already installed.")
+        ok("Crawl4AI already installed")
         return
     wanted = args.crawl4ai if args.crawl4ai is not None else _confirm(
         "Install Crawl4AI?", True, interactive,
         "Crawl4AI: about 35 packages in their own environment, plus a 280 MB headless Chromium.\n"
         "It recovers spec tables and script-built pages that the main text reader misses.")
     if not wanted:
-        print("   Skipped. Pages are read with trafilatura alone; run setup again to add it.")
+        warn("Skipped. Pages are read with trafilatura alone; run setup again to add it.")
         return
     from pm import ensure_environment
-    print("   Preparing the environment (a few minutes the first time)...")
+    info("Preparing the environment (a few minutes the first time)...")
     python = ensure_environment(extract.CRAWL4AI_ENV, [CRAWL4AI_REQUIREMENT], explicit=True)
-    print("   Downloading the headless Chromium...")
+    info("Downloading the headless Chromium...")
     done = subprocess.run([str(python), "-m", "playwright", "install", "--only-shell", "chromium"])
     if done.returncode != 0:
-        print("   ! The browser download failed; Crawl4AI stays off until it succeeds.")
+        error("The browser download failed; Crawl4AI stays off until it succeeds.")
+    else:
+        ok("Crawl4AI installed")
 
 
 SKILL = "grounded-web:web-research"
 
 
 def step_skill(args, interactive: bool) -> None:
-    print("\n4. Research skill")
-    print(f"   {SKILL} tells the model to open pages instead of answering from search snippets,")
-    print("   one URL per web_extract call. Auto-loading puts it in every new session (about 600 tokens).")
+    header("4. Research skill")
+    info(f"{SKILL} tells the model to open pages instead of answering from search snippets,")
+    info("one URL per web_extract call. Auto-loading puts it in every new session (about 600 tokens).")
     current = ((_config().get("skills") or {}).get("auto_load")) or []
     if not isinstance(current, list):
         current = []
     if SKILL in current:
-        print("   Already auto-loaded.")
+        ok("Research skill already auto-loaded")
         return
     wanted = args.skill if args.skill is not None else _confirm(
         f"Auto-load {SKILL}?", True, interactive,
         "The skill makes the model open pages instead of answering from search snippets.\n"
         "It is added to every new session (about 600 tokens).")
     if not wanted:
-        print(f"   Skipped. Load it by hand with /skill {SKILL}.")
+        warn(f"Skipped. Load it by hand with /skill {SKILL}.")
         return
     import json
     _set("skills.auto_load", json.dumps([*current, SKILL]))
 
 
 def step_test() -> bool:
-    print("\n5. Test")
-    pages = asyncio.run(extract.read_pages([TEST_PAGE, TEST_MISSING]))
-    ok, missing = pages
-    good = bool(ok.content) and not ok.error
-    print(f"   {TEST_PAGE}: " + (f"{len(ok.content)} characters via {ok.engine}" if good else f"FAILED: {ok.error}"))
+    header("5. Test")
+    page, missing = asyncio.run(extract.read_pages([TEST_PAGE, TEST_MISSING]))
+    good = bool(page.content) and not page.error
+    if good:
+        ok(f"Read {TEST_PAGE}: {len(page.content)} characters via {page.engine}")
+    else:
+        error(f"Could not read {TEST_PAGE}: {page.error}")
     caught = bool(missing.error)
-    print(f"   missing page: " + (f"reported as an error ({missing.error})" if caught else "NOT reported as an error"))
+    if caught:
+        ok(f"A missing page is reported as an error ({missing.error})")
+    else:
+        error("A missing page was NOT reported as an error")
     return good and caught
 
 
@@ -314,7 +375,7 @@ def handle(args) -> int:
         return 1
     interactive = not args.yes
     if interactive and not sys.stdin.isatty():
-        print("No terminal to ask questions in: run with --yes, plus --search / --crawl4ai to choose.")
+        error("No terminal to ask questions in: run with --yes, plus --search / --crawl4ai / --skill to choose.")
         return 1
     s = state()
     print_state(s)
@@ -323,9 +384,9 @@ def handle(args) -> int:
     step_crawl4ai(args, s, interactive)
     step_skill(args, interactive)
     passed = step_test()
+    print_state(state(), "Saved settings")  # what was really saved, so a skipped step shows here
     print()
-    print_state(state())  # what was really saved, so a skipped step shows here
-    print("\nRestart Hermes (or `hermes gateway restart`) so running sessions pick up the changes.")
+    info("Restart Hermes (or `hermes gateway restart`) so running sessions pick up the changes.")
     return 0 if passed else 1
 
 
