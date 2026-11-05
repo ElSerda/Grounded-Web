@@ -168,10 +168,14 @@ async def pdf_text_isolated(data: bytes) -> str:
     from anywhere: a bad one must not hang or bloat Hermes. Raises RuntimeError on failure or timeout.
     """
     kwargs = {} if os.name == "nt" else {"preexec_fn": _limit_memory}
+    # Hermes runs a base interpreter and adds its package environment to sys.path at startup, so
+    # the child gets the parent's import path explicitly (and no user site-packages: -s).
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p and os.path.isdir(p)),
+           "PYTHONIOENCODING": "utf-8"}
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-I", str(PDF_READER), str(MAX_CONTENT_CHARS),
+        sys.executable, "-s", str(PDF_READER), str(MAX_CONTENT_CHARS),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        **kwargs,
+        env=env, **kwargs,
     )
     try:
         out, err = await asyncio.wait_for(proc.communicate(data), PDF_TIMEOUT)

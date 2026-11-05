@@ -55,3 +55,13 @@ def test_a_stuck_reader_is_stopped(tmp_path, monkeypatch):
 def test_a_broken_pdf_is_an_error_not_a_crash():
     with pytest.raises(RuntimeError):
         asyncio.run(ex.pdf_text_isolated(b"%PDF-1.4 not really a pdf"))
+
+
+def test_child_finds_packages_from_the_parent_path(monkeypatch, tmp_path):
+    # Hermes runs a base interpreter and adds its package environment to sys.path at startup:
+    # the child must import pypdf through the parent's path, not its interpreter's own packages.
+    import venv
+    venv.create(tmp_path / "empty", with_pip=False)  # an interpreter that has no pypdf of its own
+    bare = tmp_path / "empty" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    monkeypatch.setattr(ex.sys, "executable", str(bare))
+    assert "360 W" in asyncio.run(ex.pdf_text_isolated(tiny_pdf("Total power 360 W")))
