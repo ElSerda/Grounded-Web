@@ -72,3 +72,14 @@ def test_documents_are_recognized_by_signature_type_or_extension():
     assert ex.is_document("https://a.example/x", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", b"PK")
     assert ex.is_document("https://a.example/report.epub?dl=1", "application/octet-stream", b"PK")
     assert not ex.is_document("https://a.example/page.html", "text/html; charset=utf-8", b"<html>")
+
+
+def test_format_is_passed_when_known():
+    assert ex.document_format("https://a.example/data.csv", "text/csv; charset=utf-8", b"a,b") == (True, "csv")
+    assert ex.document_format("https://a.example/x", "application/pdf", b"%PDF-") == (True, "pdf")
+    assert ex.document_format("https://a.example/old.xls", "", b"\xd0\xcf") == (True, None)
+
+
+def test_csv_is_read_as_a_table():
+    text = asyncio.run(ex.document_text_isolated(b"plan,ram_gb,disk_gb\nplus,4,25\nultra,8,100\n", "csv"))
+    assert "ultra" in text and "100" in text

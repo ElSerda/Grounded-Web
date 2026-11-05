@@ -154,15 +154,41 @@ DOC_TIMEOUT = 60
 DOC_MEMORY_LIMIT = 1024 * 1024 * 1024  # POSIX only: Windows has no per-process limit to set
 DOC_READER = Path(__file__).with_name("doc_reader.py")
 # What anydoc converts, by content type and by URL extension (Hermes's ANYDOC_EXTENSIONS).
-DOC_EXTENSIONS = (".pdf", ".doc", ".docx", ".docm", ".ppt", ".pptx", ".pptm", ".pps", ".ppsx", ".xls", ".xlsx",
-                  ".xlsm", ".xlsb", ".odt", ".ods", ".odp", ".rtf", ".epub")
-DOC_TYPES = ("application/pdf", "application/msword", "application/vnd.ms-", "application/vnd.openxmlformats",
-             "application/vnd.oasis.opendocument", "application/rtf", "text/rtf", "application/epub")
+# What anydoc converts (Hermes's ANYDOC_EXTENSIONS plus CSV), and the format name anydoc takes.
+DOC_EXTENSIONS = {
+    ".pdf": "pdf", ".doc": "doc", ".docx": "docx", ".docm": "docx", ".odt": "odt", ".rtf": "rtf",
+    ".ppt": "ppt", ".pps": "ppt", ".pptx": "pptx", ".pptm": "pptx", ".ppsx": "pptx", ".odp": "odp",
+    ".xls": None, ".xlsx": "xlsx", ".xlsm": "xlsx", ".xlsb": None, ".ods": "ods",
+    ".epub": "epub", ".csv": "csv",
+}
+DOC_TYPES = {
+    "application/pdf": "pdf", "application/msword": "doc", "application/rtf": "rtf", "text/rtf": "rtf",
+    "application/epub+zip": "epub", "text/csv": "csv",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml": "docx",
+    "application/vnd.openxmlformats-officedocument.presentationml": "pptx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml": "xlsx",
+    "application/vnd.oasis.opendocument.text": "odt", "application/vnd.oasis.opendocument.presentation": "odp",
+    "application/vnd.oasis.opendocument.spreadsheet": "ods",
+    "application/vnd.ms-powerpoint": "ppt", "application/vnd.ms-excel": None,
+}
+
+
+def document_format(url: str, ctype: str, body: bytes) -> tuple[bool, str | None]:
+    """(is a document, anydoc format name or None to let anydoc detect it)."""
+    path = url.lower().split("?")[0].split("#")[0]
+    if body[:5] == b"%PDF-":
+        return True, "pdf"
+    for prefix, fmt in DOC_TYPES.items():
+        if ctype.startswith(prefix):
+            return True, fmt
+    for ext, fmt in DOC_EXTENSIONS.items():
+        if path.endswith(ext):
+            return True, fmt
+    return False, None
 
 
 def is_document(url: str, ctype: str, body: bytes) -> bool:
-    path = url.lower().split("?")[0].split("#")[0]
-    return body[:5] == b"%PDF-" or any(t in ctype for t in DOC_TYPES) or path.endswith(DOC_EXTENSIONS)
+    return document_format(url, ctype, body)[0]
 
 
 def _limit_memory() -> None:  # runs in the child, before anydoc starts
@@ -186,7 +212,7 @@ def ensure_doc_reader() -> None:
         raise RuntimeError(f"Hermes's document converter is not installed: {exc}") from exc
 
 
-async def document_text_isolated(data: bytes) -> str:
+async def document_text_isolated(data: bytes, fmt: str | None = None) -> str:
     """Markdown of a document, converted by doc_reader.py (anydoc) in a child process stopped after
     DOC_TIMEOUT seconds (and, on POSIX, capped in memory). anydoc is native code and documents come
     from anywhere: a crafted one must not hang, bloat or crash Hermes.
@@ -200,7 +226,7 @@ async def document_text_isolated(data: bytes) -> str:
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p and os.path.isdir(p)),
            "PYTHONIOENCODING": "utf-8"}
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-s", str(DOC_READER), str(MAX_CONTENT_CHARS),
+        sys.executable, "-s", str(DOC_READER), str(MAX_CONTENT_CHARS), fmt or "",
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         env=env, **kwargs,
     )
@@ -328,7 +354,7 @@ async def _read_page(client, url: str, slots: asyncio.Semaphore | None = None) -
         if too_big:
             return Page(url, error=_origin(status, f"document larger than {MAX_DOC_BYTES // 2**20} MB"))
         try:
-            text = await document_text_isolated(body)
+            text = await document_text_isolated(body, document_format(url, ctype, body)[1])
         except Exception as exc:  # noqa: BLE001
             return Page(url, error=_origin(status, f"unreadable document: {exc}"))
         return Page(url, url.rstrip("/").rsplit("/", 1)[-1], text, engine="anydoc")
