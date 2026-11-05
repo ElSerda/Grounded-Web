@@ -9,16 +9,16 @@ A Hermes Agent plugin for web answers you can check.
 The check is plain code. It costs no tokens and makes no model call.
 
 ```
-Résolution max : 4K @ 480 Hz ou 8K @ 165 Hz (avec DSC)
+- Max display support: 4K @ 480 Hz or 8K @ 165 Hz (DP 2.1b + DSC)
+- Memory speed: 30 Gbps
 ...
 
-Sources (pages ouvertes) :
+Sources (opened pages):
 - https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5080/
 - https://www.notebookcheck.net/Nvidia-GeForce-RTX-5080-Benchmarks-and-Specs.935679.0.html
 
-Vérification : 31 valeurs sur 32 retrouvées dans ces pages.
-Absent des pages ouvertes : 30 Gbps
-Les pages divergent après « or 8k at » : 165Hz (nvidia.com) / 120Hz (notebookcheck.net)
+⚠ 1 of the 32 numbers in this answer is not in the opened pages: 30 Gbps
+⚠ The pages give different values after “or 8k at”: 165Hz (nvidia.com), 120Hz (notebookcheck.net)
 ```
 
 The footer is in English or French. By default it follows Hermes's `display.language`, like Hermes's own notices; set `language: answer` to follow the language of the reply instead.
@@ -38,13 +38,13 @@ grounded-web fixes the first and makes the other two visible.
 1. Download it. An HTTP error (404, 410, 5xx) is reported as an error, unless a browser can still open the page.
 2. PDF: text with pypdf. HTML: main text with trafilatura.
 3. With Crawl4AI installed, the same page is also opened in a headless browser. Lines of the browser view that hold values missing from the main text, such as spec table rows, are appended under "More values from this page". Pages that trafilatura cannot read, because scripts build them, use the browser view instead.
-4. Bot walls ("Just a moment...", "Automated bot check") and short error pages that answer HTTP 200 are reported as errors. The model never receives them as content.
+4. Bot walls ("Just a moment...", "Automated bot check") and short error pages that answer HTTP 200 are reported as errors, in Hermes's `HTTP <code> from origin: ...` form. Hermes then does not re-fetch them through its keyless rescue (an outside service that can return the same wall as content), and a wall that another backend returns is never listed as a source.
 
 Each page is capped at 30,000 characters.
 
 ## How the check works
 
-After each turn, the plugin compares the final answer with the text of every page `web_extract` returned in that turn.
+After each turn that used a web tool, the plugin compares the final answer with the text of every page `web_extract` returned in the conversation so far, so an answer may rely on a page opened a few turns earlier; such pages are listed as "opened earlier". With no page opened at all, it checks against the search snippets and says so.
 
 - Spellings are matched: `1 344 Go/s` = `1,344 GB/sec`, `65,3 TFLOPS` = `65.3 TFLOPS¹`, and a unit in a table header (`| AI TOPS | 2064 |`) counts.
 - Small bare numbers (generations, counts), product codes (`GB203-400-A1`), links and any source list the model wrote itself are skipped.
@@ -99,7 +99,7 @@ Search and page reading are separate settings: grounded-web only reads pages. It
 - **Skill:** `grounded-web:web-research`, read-only, loaded only if you auto-load it or call it.
 - **Network:** downloads the URLs the agent asks `web_extract` to read, directly from this machine with a desktop browser user agent. `setup` also checks the SearXNG URL you give it and reads two test pages on iana.org. Crawl4AI's browser loads the same URLs and their page assets.
 - **Processes:** one Crawl4AI child process per page, at most three at once, each stopped after 60 seconds.
-- **Writes:** `web.search_backend`, `web.extract_backend`, `skills.auto_load` and, for SearXNG, `SEARXNG_URL` in `.env`, all through Hermes's own config functions and only during `setup`. Nothing else is stored: page text lives in memory for the current turn only.
+- **Writes:** `web.search_backend`, `web.extract_backend`, `skills.auto_load` and, for SearXNG, `SEARXNG_URL` in `.env`, all through Hermes's own config functions and only during `setup`. Nothing else is stored: page text lives in memory only, for at most 30 pages per conversation and 20 conversations, and is gone when Hermes stops.
 - **No telemetry**, no credentials read, no self-update.
 
 ## Limits
