@@ -25,7 +25,7 @@ MAX_SESSIONS = 20
 
 _lock = threading.Lock()
 _turns: dict[str, dict[str, Any]] = {}
-_sessions: "OrderedDict[str, OrderedDict[str, str]]" = OrderedDict()
+_sessions: "OrderedDict[str, OrderedDict[str, tuple[str, str]]]" = OrderedDict()  # url -> (title, text)
 _ctx = None
 
 
@@ -58,7 +58,7 @@ def _pages(result: Any) -> list[dict]:
     from .extract import looks_blocked
 
     return [
-        {"url": p["url"], "content": str(p["content"])}
+        {"url": p["url"], "title": str(p.get("title") or ""), "content": str(p["content"])}
         for p in _payload(result).get("results") or []
         if isinstance(p, dict) and p.get("url") and p.get("content") and not p.get("error")
         and not looks_blocked(str(p.get("title") or ""), str(p["content"]))
@@ -90,10 +90,10 @@ def _start_turn(session_id: str = "", **_: Any) -> Optional[str]:
     return REMINDER if _setting("remind", True) else None
 
 
-def _remember(session_id: str, url: str, content: str) -> None:
+def _remember(session_id: str, url: str, title: str, content: str) -> None:
     pages = _sessions.setdefault(session_id, OrderedDict())
     _sessions.move_to_end(session_id)
-    pages[url] = content
+    pages[url] = (title, content)
     pages.move_to_end(url)
     while len(pages) > MAX_PAGES_PER_SESSION:
         pages.popitem(last=False)
@@ -113,7 +113,7 @@ def _record_tool(tool_name: str = "", result: Any = None, session_id: str = "", 
         for hit in hits:
             turn["snippets"].setdefault(hit["url"], hit["content"])
         for page in pages:
-            _remember(session_id, page["url"], page["content"])
+            _remember(session_id, page["url"], page["title"], page["content"])
             if page["url"] not in turn["opened"]:
                 turn["opened"].append(page["url"])
 
@@ -124,15 +124,18 @@ def _append_footer(response_text: str = "", session_id: str = "", **_: Any) -> O
         known = dict(_sessions.get(session_id, {}))
     if turn is None or not response_text:
         return None  # no web tool this turn: nothing to report
-    pages = [{"url": u, "content": c} for u, c in known.items()]
+    pages = [{"url": u, "content": c} for u, (_, c) in known.items()]
+    titles = {u: t for u, (t, _) in known.items()}
     # No page opened in this session: check against this turn's search snippets, and say so.
     basis = "pages" if pages else "snippets"
     if not pages:
         pages = [{"url": u, "content": c} for u, c in turn["snippets"].items()]
-    report = verify.check(response_text, pages) if pages and _setting("verify", True) else None
+    # Always run: it tells which earlier pages the answer relies on. Shown only with `verify` on.
+    report = verify.check(response_text, pages) if pages else None
     earlier = [u for u in (report.used if report and basis == "pages" else []) if u not in turn["opened"]]
     lang = footer.language_of(response_text, _setting("language", "auto"))
-    text = footer.build(turn["opened"], turn["searched"], report, lang, _setting("show_sources", True), basis, earlier)
+    text = footer.build(turn["opened"], turn["searched"], report, lang, _setting("show_sources", True), basis, earlier,
+                        titles=titles, show_check=bool(_setting("verify", False)))
     # Keep the answer byte for byte: Hermes then prints only the added footer after a streamed reply.
     return f"{response_text}\n\n{text}" if text else None
 

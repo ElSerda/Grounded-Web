@@ -3,23 +3,26 @@
 A Hermes Agent plugin for web answers you can check.
 
 - **Reads pages and PDFs on your machine** for `web_extract`: no API key, no extraction service.
-- **Lists the pages the answer really used**, under the answer.
-- **Checks the answer's values against those pages**: every number with a unit, price, version and large number in the answer must appear in an opened page. When two pages give different values for the same thing, it says so.
-
-The check is plain code. It costs no tokens and makes no model call.
+- **Lists the pages the answer really used**, under the answer, with clickable links. Pages are taken from the tool results, never from the model's text, so the list cannot name a page that was not read.
+- **Checks the answer's values against those pages**: every number with a unit, price, version and large number in the answer must appear in an opened page, and disagreements between pages are found. The check is plain code: no tokens, no model call. Its result is shown only when you turn on `verify`.
 
 ```
 - Max display support: 4K @ 480 Hz or 8K @ 165 Hz (DP 2.1b + DSC)
-- Memory speed: 30 Gbps
 ...
 
 Sources (opened pages):
-- https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5080/
-- https://www.notebookcheck.net/Nvidia-GeForce-RTX-5080-Benchmarks-and-Specs.935679.0.html
+- NVIDIA GeForce RTX 5080 Graphics Cards: https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5080/
+- GeForce_RTX_5080_User_Guide_Rev1.pdf: https://www.nvidia.com/content/geforce-gtx/GeForce_RTX_5080_User_Guide_Rev1.pdf
+```
 
+With `verify: true`, the check is added below the sources:
+
+```
 ⚠ 1 of the 32 numbers in this answer is not in the opened pages: 30 Gbps
 ⚠ The pages give different values after “or 8k at”: 165Hz (nvidia.com), 120Hz (notebookcheck.net)
 ```
+
+Links are written out in full rather than as Markdown links: the Hermes CLI prints replies as plain text, where a bare link stays clickable (Ctrl+click in Windows Terminal) and Desktop and chat apps link it too.
 
 The footer is in English or French. By default it follows Hermes's `display.language`, like Hermes's own notices; set `language: answer` to follow the language of the reply instead.
 
@@ -86,7 +89,7 @@ Under Settings → Plugins in Hermes Desktop, or `plugins.entries.grounded-web.s
 |---|---|---|
 | `language` | `auto` | Footer language: `auto` (Hermes's `display.language`; English for languages other than en/fr), `answer` (the reply's language), `en` or `fr` |
 | `show_sources` | `true` | List the opened pages |
-| `verify` | `true` | Check the answer's values |
+| `verify` | `false` | Show the value check under the sources |
 | `remind` | `true` | Add one sentence to each user message (about 50 tokens): search snippets are not sources, open the pages |
 
 Search and page reading are separate settings: grounded-web only reads pages. It works with any search backend.

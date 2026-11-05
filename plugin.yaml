@@ -29,8 +29,9 @@ config_schema:
     label: List opened pages
   verify:
     type: bool
-    default: true
-    label: Check values against the opened pages
+    default: false
+    label: Show the value check under the answer
+    description: "Adds lines such as '2 of the 22 numbers in this answer are not in the opened pages'"
   remind:
     type: bool
     default: true

@@ -70,23 +70,33 @@ def _site(url: str) -> str:
     return host[4:] if host.startswith("www.") else host or url
 
 
+def _source_line(url: str, titles: dict[str, str]) -> str:
+    """"- Page title: https://..." with the link bare, so terminals, Desktop and chat apps make it clickable."""
+    title = re.sub(r"\s+", " ", titles.get(url, "")).strip()
+    if len(title) > 80:
+        title = title[:77].rstrip() + "..."
+    return f"- {title}: {url}" if title else f"- {url}"
+
+
 def build(opened: list[str], searched: bool, report: Report | None, lang: str, show_sources: bool = True,
-          basis: str = "pages", earlier: list[str] | None = None) -> str:
+          basis: str = "pages", earlier: list[str] | None = None, titles: dict[str, str] | None = None,
+          show_check: bool = True) -> str:
     """basis: "pages" when the report checked opened pages, "snippets" when only search results.
-    earlier: pages from previous turns whose values the answer uses."""
+    earlier: pages from previous turns whose values the answer uses. show_check: add the check lines."""
     t = _TEXT[lang]
+    titles = titles or {}
     suffix = "_snippets" if basis == "snippets" else ""
     lines: list[str] = []
     if show_sources:
         if opened:
             lines.append(t["sources"])
-            lines.extend(f"- {url}" for url in opened)
+            lines.extend(_source_line(url, titles) for url in opened)
         if earlier:
             lines.append(t["earlier"])
-            lines.extend(f"- {url}" for url in earlier)
+            lines.extend(_source_line(url, titles) for url in earlier)
         if not opened and not earlier:
             lines.append(t["snippets"] if searched else t["no_page"])
-    if report is not None and report.checked:
+    if show_check and report is not None and report.checked:
         if lines:
             lines.append("")
         total, n = len(report.checked), len(report.missing)
