@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
+import shutil
+import stat
 import subprocess
 import sys
 
@@ -188,8 +191,45 @@ def _confirm(question: str, default: bool, interactive: bool, description: str =
     return _choose(question.strip(), options, "yes" if default else "no", interactive, description) == "yes"
 
 
+# ---------------------------------------------------------------- what setup replaced, for uninstall
+
+PLUGIN_NAME = "grounded-web"
+RESTORED_KEYS = ("web.search_backend", "web.extract_backend")
+
+
+def _data_dir():
+    try:
+        from plugins.plugin_storage import plugin_data_dir
+        return plugin_data_dir(PLUGIN_NAME)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _previous() -> dict:
+    d = _data_dir()
+    try:
+        return json.loads((d / "previous.json").read_text(encoding="utf-8")) if d else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _config_value(key: str):
+    node = _config()
+    for part in key.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node
+
+
 def _set(key: str, value: str) -> None:
+    """Write a Hermes setting; the first time setup changes a web backend, keep the old value."""
     from hermes_cli.config import set_config_value
+    if key in RESTORED_KEYS:
+        previous = _previous()
+        if key not in previous and (d := _data_dir()) is not None:
+            previous[key] = _config_value(key)
+            (d / "previous.json").write_text(json.dumps(previous, indent=1), encoding="utf-8")
     set_config_value(key, value)
 
 
@@ -352,6 +392,125 @@ def step_test() -> bool:
     return good and caught
 
 
+# ---------------------------------------------------------------- uninstall
+
+
+def _rmtree(path) -> None:
+    def clear_readonly(func, target, _exc):
+        import os
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+    shutil.rmtree(path, onexc=clear_readonly) if sys.version_info >= (3, 12) else shutil.rmtree(path, onerror=clear_readonly)
+
+
+def _browser_dirs_in_use_elsewhere(own_package) -> set[str]:
+    """Browser folder names (e.g. chromium_headless_shell-1248) that other registered Playwright
+    installs on this machine need, read from each one's browsers.json."""
+    from pathlib import Path
+    import os
+    root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or "")
+    if not root.name:
+        local = os.environ.get("LOCALAPPDATA")
+        root = Path(local) / "ms-playwright" if local else Path.home() / ".cache" / "ms-playwright"
+        if sys.platform == "darwin":
+            root = Path.home() / "Library" / "Caches" / "ms-playwright"
+    needed: set[str] = set()
+    for link in (root / ".links").glob("*") if (root / ".links").is_dir() else []:
+        try:
+            package = Path(link.read_text(encoding="utf-8").strip())
+        except OSError:
+            continue
+        if own_package and package.resolve() == own_package.resolve():
+            continue
+        try:
+            data = json.loads((package / "browsers.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue  # that install is gone: its browsers are not ours to judge
+        for b in data.get("browsers", []):
+            needed.add(f"{str(b.get('name', '')).replace('-', '_')}-{b.get('revision', '')}")
+    return needed
+
+
+def _remove_own_browsers(python) -> list[str]:
+    """Delete the browser folders Crawl4AI's Playwright installed, unless another install needs them."""
+    from pathlib import Path
+    out = subprocess.run([str(python), "-m", "playwright", "install", "--only-shell", "--dry-run", "chromium"],
+                         capture_output=True, text=True, timeout=60)
+    ours = [Path(line.split(":", 1)[1].strip()) for line in out.stdout.splitlines() if "Install location" in line]
+    try:
+        package = Path(subprocess.run([str(python), "-c", "import playwright, pathlib; print(pathlib.Path(playwright.__file__).parent / 'driver' / 'package')"],
+                                      capture_output=True, text=True, timeout=60).stdout.strip())
+    except Exception:  # noqa: BLE001
+        package = None
+    elsewhere = _browser_dirs_in_use_elsewhere(package)
+    removed = []
+    if package is not None and ours:  # drop this install's registration in Playwright's .links
+        for link in (ours[0].parent / ".links").glob("*"):
+            try:
+                if Path(link.read_text(encoding="utf-8").strip()).resolve() == package.resolve():
+                    link.unlink()
+            except OSError:
+                continue
+    for folder in ours:
+        if folder.exists() and folder.name not in elsewhere:
+            _rmtree(folder)
+            removed.append(folder.name)
+        elif folder.exists():
+            info(f"Kept {folder.name}: another Playwright install on this machine uses it.")
+    return removed
+
+
+def uninstall(interactive: bool) -> int:
+    """Undo what setup did, so `hermes plugins remove grounded-web` leaves nothing behind."""
+    from hermes_cli.config import set_config_value, unset_config_value
+
+    header("Remove grounded-web's settings and downloads")
+    info("Run this before `hermes plugins remove grounded-web`. It restores the web backends that")
+    info("setup replaced, removes the research skill from auto-load, and deletes Crawl4AI's")
+    info("environment and its headless Chromium.")
+    if not _confirm("Remove grounded-web's settings and downloads?", True, interactive,
+                    "Restores web backends, drops the skill from auto-load, deletes Crawl4AI and its Chromium."):
+        warn("Nothing changed.")
+        return 1
+    previous = _previous()
+    for key in RESTORED_KEYS:
+        current = _config_value(key)
+        if key in previous:
+            old = previous[key]
+            if old in (None, ""):
+                unset_config_value(key)
+            elif old != current:
+                set_config_value(key, str(old))
+            ok(f"{key} restored to {old or '(not set)'}")
+        elif current == PLUGIN_NAME:
+            unset_config_value(key)  # set by hand: grounded-web will be gone, so do not leave it pointing there
+            ok(f"{key} cleared (it pointed at grounded-web)")
+    auto = _config_value("skills.auto_load")
+    if isinstance(auto, list) and SKILL in auto:
+        set_config_value("skills.auto_load", json.dumps([name for name in auto if name != SKILL]))
+    python = extract.crawl4ai_python()
+    if python is not None:
+        removed = _remove_own_browsers(python)
+        if removed:
+            ok(f"Browser files removed: {', '.join(removed)}")
+    try:
+        from hermes_constants import get_hermes_home
+        env_dir = get_hermes_home() / "environments" / extract.CRAWL4AI_ENV
+    except Exception:  # noqa: BLE001
+        env_dir = None
+    if env_dir is not None and env_dir.exists():
+        _rmtree(env_dir)
+        ok(f"Crawl4AI environment deleted ({env_dir})")
+    d = _data_dir()
+    if d is not None and d.exists():
+        _rmtree(d)
+    if _secret("SEARXNG_URL"):
+        info("SEARXNG_URL stays in Hermes's .env; Hermes's own SearXNG backend uses it too.")
+    print()
+    info("Now run `hermes plugins remove grounded-web`, then restart Hermes.")
+    return 0
+
+
 # ---------------------------------------------------------------- entry points
 
 
@@ -368,6 +527,8 @@ def _setup_parser(parser) -> None:
     sk.add_argument("--skill", dest="skill", action="store_true", default=None, help="Auto-load the research skill")
     sk.add_argument("--no-skill", dest="skill", action="store_false", help="Do not auto-load the research skill")
     setup.add_argument("--yes", action="store_true", help="Accept the defaults without asking")
+    rm = subs.add_parser("uninstall", help="Undo setup before `hermes plugins remove grounded-web`")
+    rm.add_argument("--yes", action="store_true", help="Do not ask for confirmation")
     parser.set_defaults(func=handle)
 
 
@@ -376,8 +537,13 @@ def handle(args) -> int:
     if command == "status":
         print_state(state())
         return 0
+    if command == "uninstall":
+        if not args.yes and not sys.stdin.isatty():
+            error("No terminal to confirm in: run `hermes grounded-web uninstall --yes`.")
+            return 1
+        return uninstall(not args.yes)
     if command != "setup":
-        print("Usage: hermes grounded-web <status|setup>")
+        print("Usage: hermes grounded-web <status|setup|uninstall>")
         return 1
     interactive = not args.yes
     if interactive and not sys.stdin.isatty():
