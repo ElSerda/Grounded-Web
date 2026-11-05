@@ -63,10 +63,20 @@ def _snippets(result: Any) -> list[dict]:
     ]
 
 
-def _start_turn(session_id: str = "", **_: Any) -> None:
+# Added to the user's message, a trusted position: inside a tool result Hermes marks text as data
+# the model must not follow. Small models otherwise answer from snippets that happen to hold numbers.
+REMINDER = (
+    "[grounded-web] If you search the web for this message: search snippets are not sources. "
+    "Open the most relevant results with web_extract, one URL per call, before answering. "
+    "Your answer is checked against the pages you open."
+)
+
+
+def _start_turn(session_id: str = "", **_: Any) -> Optional[str]:
     # An interrupted turn never reaches the transform hook, so its pages are dropped here.
     with _lock:
         _turns.pop(session_id, None)
+    return REMINDER if _setting("remind", True) else None
 
 
 def _record_tool(tool_name: str = "", result: Any = None, session_id: str = "", **_: Any) -> None:

@@ -31,3 +31,8 @@ config_schema:
     type: bool
     default: true
     label: Check values against the opened pages
+  remind:
+    type: bool
+    default: true
+    label: Remind the model to open pages
+    description: "Adds one sentence (about 50 tokens) to each user message: search snippets are not sources"

@@ -87,12 +87,13 @@ Under Settings → Plugins in Hermes Desktop, or `plugins.entries.grounded-web.s
 | `language` | `auto` | Footer language: `auto`, `en` or `fr` |
 | `show_sources` | `true` | List the opened pages |
 | `verify` | `true` | Check the answer's values |
+| `remind` | `true` | Add one sentence to each user message (about 50 tokens): search snippets are not sources, open the pages |
 
 Search and page reading are separate settings: grounded-web only reads pages. It works with any search backend.
 
 ## What it does, for review
 
-- **Hooks:** `pre_llm_call` (starts a record for the turn), `post_tool_call` (keeps the text of `web_extract` results), `transform_llm_output` (appends the footer; the answer itself is not changed, so a streamed answer is not printed twice).
+- **Hooks:** `pre_llm_call` (starts a record for the turn and, unless `remind` is off, appends the one-sentence reminder to the user message), `post_tool_call` (keeps the text of `web_extract` results), `transform_llm_output` (appends the footer; the answer itself is not changed, so a streamed answer is not printed twice).
 - **Web provider:** `grounded-web`, extract only.
 - **CLI:** `hermes grounded-web status|setup`.
 - **Skill:** `grounded-web:web-research`, read-only, loaded only if you auto-load it or call it.

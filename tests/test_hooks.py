@@ -99,3 +99,10 @@ def test_search_only_turn_is_checked_against_snippets():
     assert "Aucune page ouverte" in out
     assert "Vérification sur les seuls extraits de recherche : 1 valeurs sur 2 retrouvées." in out
     assert "Absent des extraits : 999 $" in out
+
+
+def test_reminder_is_added_to_each_turn_and_can_be_turned_off():
+    ctx = setup()
+    assert "snippets are not sources" in ctx.hooks["pre_llm_call"](session_id="s1", user_message="q")
+    ctx = setup({"remind": False})
+    assert ctx.hooks["pre_llm_call"](session_id="s1", user_message="q") is None
