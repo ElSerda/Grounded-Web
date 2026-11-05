@@ -189,15 +189,13 @@ def crawl4ai_python() -> Path | None:
         return None
 
 
-_browser_slots: asyncio.Semaphore | None = None
-
-
-async def browser_view(url: str) -> dict:
+async def browser_view(url: str, slots: asyncio.Semaphore | None = None) -> dict:
     """Crawl4AI result for one URL: {success, status, markdown, title, error}."""
-    global _browser_slots
-    if _browser_slots is None:
-        _browser_slots = asyncio.Semaphore(BROWSERS_AT_ONCE)
-    async with _browser_slots:
+    # slots: created per read_pages call, inside its event loop. An asyncio.Semaphore is bound to
+    # the loop it first runs in, and Hermes may call the provider from different loops.
+    if slots is None:
+        return await _browser_view(url)
+    async with slots:
         return await _browser_view(url)
 
 
@@ -246,16 +244,16 @@ def _origin(status: int, reason: str) -> str:
     return f"HTTP {status or 200} from origin: {reason}"[:300]
 
 
-async def read_page(client, url: str) -> Page:
+async def read_page(client, url: str, slots: asyncio.Semaphore | None = None) -> Page:
     try:
-        return await _read_page(client, url)
+        return await _read_page(client, url, slots)
     except Exception as exc:  # noqa: BLE001 - one bad page never fails the whole call
         logger.warning("grounded-web: reading %s failed", url, exc_info=True)
         return Page(url, error=f"could not read the page: {exc.__class__.__name__}: {exc}"[:300])
 
 
-async def _read_page(client, url: str) -> Page:
-    browser = asyncio.create_task(browser_view(url)) if not url.lower().split("?")[0].endswith(".pdf") else None
+async def _read_page(client, url: str, slots: asyncio.Semaphore | None = None) -> Page:
+    browser = asyncio.create_task(browser_view(url, slots)) if not url.lower().split("?")[0].endswith(".pdf") else None
     try:
         response, body, too_big = await _download(client, url)
         status, ctype = response.status_code, response.headers.get("content-type", "").lower()
@@ -305,7 +303,8 @@ async def read_pages(urls: list[str]) -> list[Page]:
 
     headers = {"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.8,fr;q=0.6"}
     async with httpx.AsyncClient(follow_redirects=True, timeout=FETCH_TIMEOUT, headers=headers) as client:
-        return list(await asyncio.gather(*(read_page(client, u) for u in urls)))
+        slots = asyncio.Semaphore(BROWSERS_AT_ONCE)
+        return list(await asyncio.gather(*(read_page(client, u, slots) for u in urls)))
 
 
 if __name__ == "__main__" and len(sys.argv) > 1:  # manual check: python -m ... URL

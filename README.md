@@ -125,7 +125,8 @@ Hermes runs every plugin's `transform_llm_output` hook but keeps only the first 
 python -m venv .venv
 .venv/Scripts/python -m pip install pytest      # Linux/macOS: .venv/bin/python
 .venv/Scripts/python -m pytest tests
-hermes plugins validate .
+hermes plugins doctor . --ci             # loads it the way Hermes does
+hermes plugins validate . --install-deps  # the catalog CI check
 ```
 
 The tests use made-up pages and need no network.
