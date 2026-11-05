@@ -93,15 +93,43 @@ def print_state(s: dict) -> None:
 
 
 def _ask(question: str, default: str, interactive: bool) -> str:
+    """A typed answer, with Hermes's own prompt style when it is available."""
     if not interactive:
         return default
-    answer = input(f"{question} [{default}] ").strip()
-    return answer or default
+    try:
+        from hermes_cli.setup import prompt
+    except ImportError:
+        return input(f"{question} [{default}] ").strip() or default
+    return prompt(question.strip(), default) or default
 
 
-def _confirm(question: str, default: bool, interactive: bool) -> bool:
-    answer = _ask(f"{question} (y/n)", "y" if default else "n", interactive).lower()
-    return answer.startswith(("y", "o"))  # yes / oui
+def _choose(title: str, options: list[tuple[str, str]], default: str, interactive: bool, description: str = "") -> str:
+    """One option key, picked with Hermes's own menu (arrows, Enter, Esc keeps the default).
+
+    Hermes falls back to a numbered list by itself when the terminal cannot draw the menu. If the
+    menu module is missing (a future Hermes), a plain typed answer is used instead.
+    """
+    keys = [k for k, _ in options]
+    selected = keys.index(default) if default in keys else 0
+    if not interactive:
+        return keys[selected]
+    try:
+        from hermes_cli.curses_ui import curses_radiolist
+    except ImportError:
+        print(f"   {title}")
+        for key, label in options:
+            print(f"     {key:8} {label}")
+        answer = _ask("   Choice?", keys[selected], interactive).lower()
+        return answer if answer in keys else keys[selected]
+    labels = [f"{label}" for _, label in options]
+    index = curses_radiolist(title, labels, selected=selected, cancel_returns=selected,
+                             description=description or None)
+    return keys[index if 0 <= index < len(keys) else selected]
+
+
+def _confirm(question: str, default: bool, interactive: bool, description: str = "") -> bool:
+    options = [("yes", "Yes"), ("no", "No")]
+    return _choose(question.strip(), options, "yes" if default else "no", interactive, description) == "yes"
 
 
 def _set(key: str, value: str) -> None:
@@ -132,11 +160,18 @@ def _check_searxng(url: str) -> str:
 
 def step_search(args, s: dict, interactive: bool) -> None:
     print("\n1. Search backend")
-    print("   searxng  your SearXNG instance (self-hosted, many engines)")
-    print("   ddgs     DuckDuckGo, built into Hermes, no key, no server")
-    print("   keep     leave it as it is")
-    default = args.search or ("searxng" if s["searxng_url"] else "ddgs")
-    choice = _ask("   Which one?", default, interactive).lower()
+    options = [
+        ("ddgs", "DuckDuckGo: built into Hermes, no key, no server"),
+        ("searxng", "SearXNG: your own instance (self-hosted, many engines)"),
+        ("keep", f"Keep the current one ({s['search_backend']})"),
+    ]
+    if args.search:
+        choice = args.search
+    else:
+        default = "searxng" if s["searxng_url"] else "ddgs"
+        choice = _choose("Search backend for web_search", options, default, interactive,
+                         "grounded-web reads pages; search comes from one of these.")
+    print(f"   {dict(options)[choice]}")
     if choice == "keep":
         return
     if choice == "searxng":
@@ -144,7 +179,7 @@ def step_search(args, s: dict, interactive: bool) -> None:
         problem = _check_searxng(url)
         if problem:
             print(f"   ! {problem}")
-            if not _confirm("   Save it anyway?", False, interactive):
+            if not _confirm("Save this SearXNG URL anyway?", False, interactive, problem):
                 return
         else:
             print("   SearXNG answers JSON searches.")
@@ -154,7 +189,8 @@ def step_search(args, s: dict, interactive: bool) -> None:
     elif choice == "ddgs":
         if not s["ddgs"]:
             print("   DuckDuckGo needs Hermes's `ddgs` extra.")
-            if not _confirm("   Install it now?", True, interactive):
+            if not _confirm("Install Hermes's ddgs extra now?", True, interactive,
+                            "DuckDuckGo search runs through the ddgs package, which Hermes installs on request."):
                 return
             from pm import ensure_import
             ensure_import("ddgs")
@@ -179,7 +215,10 @@ def step_crawl4ai(args, s: dict, interactive: bool) -> None:
     if s["crawl4ai_python"] and s["browser"]:
         print("   Already installed.")
         return
-    wanted = args.crawl4ai if args.crawl4ai is not None else _confirm("   Install it?", True, interactive)
+    wanted = args.crawl4ai if args.crawl4ai is not None else _confirm(
+        "Install Crawl4AI?", True, interactive,
+        "Crawl4AI: about 35 packages in their own environment, plus a 280 MB headless Chromium.\n"
+        "It recovers spec tables and script-built pages that the main text reader misses.")
     if not wanted:
         print("   Skipped. Pages are read with trafilatura alone; run setup again to add it.")
         return
@@ -205,7 +244,10 @@ def step_skill(args, interactive: bool) -> None:
     if SKILL in current:
         print("   Already auto-loaded.")
         return
-    wanted = args.skill if args.skill is not None else _confirm("   Auto-load it?", True, interactive)
+    wanted = args.skill if args.skill is not None else _confirm(
+        f"Auto-load {SKILL}?", True, interactive,
+        "The skill makes the model open pages instead of answering from search snippets.\n"
+        "It is added to every new session (about 600 tokens).")
     if not wanted:
         print(f"   Skipped. Load it by hand with /skill {SKILL}.")
         return
