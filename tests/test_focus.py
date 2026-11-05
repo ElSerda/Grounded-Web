@@ -165,3 +165,18 @@ def test_the_page_handed_back_has_the_relevant_part_first():
 def test_without_a_question_the_page_is_only_cut():
     page = ex.Page("https://maker.example/x", "X", "a" * 50_000)
     assert page.as_result()["content"] == "a" * ex.MAX_CONTENT_CHARS
+
+
+def test_a_page_without_blank_lines_is_cut_into_passages():
+    # trafilatura's text of an HTML page has no blank lines: one block of the whole page.
+    lines = [f"setting_{i}: value {i} # explained here" for i in range(3000)]
+    lines[2500] = "keyless_rescue: true  # one-shot retry on the keyless ring"
+    text = "\n".join(lines)
+    assert len(fo.passages(text)) > 50
+    out = fo.arrange(text, fo.terms_of("what does web.keyless_rescue do?"), 15_000)
+    assert "keyless_rescue: true" in model_view(out)
+
+
+def test_dotted_names_also_give_their_last_part():
+    assert fo.terms_of("web.keyless_rescue")[:2] == ["web.keyless_rescue", "keyless_rescue"]
+    assert "0.22.7" in fo.terms_of("Hermes 0.22.7") and "22" not in fo.terms_of("Hermes 0.22.7")

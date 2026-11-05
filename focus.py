@@ -18,6 +18,9 @@ DEFAULT_WINDOW = 15_000  # Hermes's DEFAULT_EXTRACT_CHAR_LIMIT
 HEAD_SHARE = 0.75        # Hermes keeps this share of the window from the top
 KEEP_OPENING = 600       # the page's opening (title, product name) always stays first
 MAX_REMEMBERED = 200
+PASSAGE_CHARS = 600      # target size of a passage cut out of a long block
+MAX_BLOCK_CHARS = 1_500  # a paragraph longer than this is cut into passages
+MAX_TABLE_CHARS = 4_000  # a table is kept whole up to this size
 
 # Words that say nothing about what a passage is about (English and French, the plugin's languages).
 STOPWORDS = set("""
@@ -36,19 +39,31 @@ _lock = threading.Lock()
 _pending: "OrderedDict[str, tuple[list[str], int]]" = OrderedDict()  # url -> (terms, window)
 
 
+def _telling(word: str) -> bool:
+    """A number or an identifier: 2.1b, 0.22.7, keyless_rescue, extract_char_limit."""
+    return any(ch.isdigit() for ch in word) or "_" in word
+
+
 def terms_of(*texts: str) -> list[str]:
-    """Search terms from free text, the most telling first: tokens with digits (5080, 2.1b), then
-    the other words of 3+ letters that are not stop words."""
+    """Search terms from free text, the most telling first: numbers and identifiers (0.22.7,
+    keyless_rescue), then the other words of 3+ letters that are not stop words. A dotted name
+    such as web.keyless_rescue also gives its last part, the way a YAML file writes it nested."""
     seen: dict[str, int] = {}
+
+    def add(word: str) -> None:
+        if not word or word in STOPWORDS or word in seen:
+            return
+        if _telling(word) or len(word) >= 3:
+            seen[word] = 3 if _telling(word) else 1
+
     for text in texts:
-        text = _OPERATOR.sub(" ", text or "")  # site:nvidia.com, filetype:pdf...
+        text = _OPERATOR.sub(" ", text or "")  # site:example.com, filetype:pdf...
         for raw in _TOKEN.findall(text.lower()):
             word = raw.strip(".+-")
-            if not word or word in STOPWORDS or word in seen:
-                continue
-            has_digit = any(ch.isdigit() for ch in word)
-            if has_digit or len(word) >= 3:
-                seen[word] = 3 if has_digit else 1
+            add(word)
+            parts = word.split(".")
+            if len(parts) > 1 and not all(part.isdigit() for part in parts):
+                add(parts[-1])
     return sorted(seen, key=lambda w: -seen[w])[:12]
 
 
@@ -58,14 +73,14 @@ def _hits(block: str, term: str) -> int:
 
 def _weights(blocks: list[str], terms: list[str]) -> dict[str, float]:
     """How telling each term is in this page: rare terms count, terms found everywhere do not
-    (inverse document frequency over the page's passages); a term with digits counts double."""
+    (inverse document frequency over the page's passages); a number or an identifier counts double."""
     import math
     n = len(blocks)
     out = {}
     for term in terms:
         df = sum(1 for b in blocks if _hits(b, term))
         if df:
-            out[term] = math.log((n + 1) / df) * (2 if any(ch.isdigit() for ch in term) else 1)
+            out[term] = math.log((n + 1) / df) * (2 if _telling(term) else 1)
     return out
 
 
@@ -101,11 +116,36 @@ def _continuation(blocks: list[str], i: int) -> list[int]:
     return out
 
 
+def passages(text: str) -> list[str]:
+    """The page cut into passages. Paragraphs (blank-line separated) first; a block longer than
+    MAX_BLOCK_CHARS, such as trafilatura's text of an HTML page, which has no blank lines, is cut
+    at line ends into passages of about PASSAGE_CHARS, never inside a table of reasonable size."""
+    out: list[str] = []
+    for block in (b for b in re.split(r"\n\s*\n", text) if b.strip()):
+        if len(block) <= MAX_BLOCK_CHARS:
+            out.append(block)
+            continue
+        chunk: list[str] = []
+        size, in_table = 0, False
+        for line in block.split("\n"):
+            is_table = line.lstrip().startswith("|")
+            inside_table = is_table and in_table and size < MAX_TABLE_CHARS
+            if chunk and size >= PASSAGE_CHARS and not inside_table:
+                out.append("\n".join(chunk))
+                chunk, size = [], 0
+            chunk.append(line)
+            size += len(line) + 1
+            in_table = is_table
+        if chunk:
+            out.append("\n".join(chunk))
+    return out
+
+
 def arrange(text: str, terms: list[str], window: int = DEFAULT_WINDOW) -> str:
     """The page with the passages about `terms` first when it is longer than `window`."""
     if len(text) <= window or not terms:
         return text
-    blocks = [b for b in re.split(r"\n\s*\n", text) if b.strip()]
+    blocks = passages(text)
     if len(blocks) < 3:
         return text
     opening, rest = [], blocks
