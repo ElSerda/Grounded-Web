@@ -20,7 +20,8 @@ def document_text(data: bytes, max_chars: int = 30_000, fmt: str | None = None) 
     except Exception as exc:  # noqa: BLE001 - every anydoc failure is a page error for the caller
         kind = type(exc).__name__
         if kind == "NeedsOcrError":
-            return {"error": "scanned document with no text layer (needs OCR)"}
+            return {"error": "scanned document with no text layer (needs OCR)",
+                    "needs_ocr": [int(p) for p in (getattr(exc, "pages", None) or [])]}
         if kind == "EncryptedError":
             return {"error": "encrypted document"}
         return {"error": f"{kind}: {exc}"[:300]}

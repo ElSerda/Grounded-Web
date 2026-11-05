@@ -40,6 +40,11 @@ BROWSERS_AT_ONCE = 3  # each Crawl4AI call starts its own headless Chromium
 SHORT_PAGE_CHARS = 1_500
 CRAWL4AI_ENV = "grounded-web-crawl4ai"
 RUNNER = Path(__file__).with_name("crawl4ai_runner.py")
+OCR_ENV = "grounded-web-ocr"
+OCR_REQUIREMENTS = ["rapidocr>=3.10,<4", "onnxruntime>=1.20,<2", "pypdfium2>=5,<6"]
+OCR_RUNNER = Path(__file__).with_name("ocr_runner.py")
+OCR_MAX_PAGES = 30
+OCR_TIMEOUT = 180  # rendering and reading 30 pages on a CPU stays well below this
 
 # Bot walls and challenge pages: never real content, whatever the page length.
 _WALL_RE = re.compile(
@@ -240,11 +245,66 @@ async def document_text_isolated(data: bytes, fmt: str | None = None) -> str:
         last = (err.decode("utf-8", "replace").strip().splitlines() or ["no output"])[-1]
         raise RuntimeError(last[:200])
     result = json.loads(out.decode("utf-8"))
+    if result.get("needs_ocr") is not None:
+        raise NeedsOcr(result["needs_ocr"])
     if result.get("error"):
         raise RuntimeError(result["error"])
     if not result.get("text"):
         raise RuntimeError("no text in the document")
     return result["text"]
+
+
+class NeedsOcr(RuntimeError):
+    """A scanned document: anydoc found no text layer on these 1-based pages."""
+
+    def __init__(self, pages: list[int]):
+        self.pages = list(pages)
+        super().__init__(f"scanned pages {_page_list(self.pages)} have no text layer")
+
+
+def _page_list(pages: list[int]) -> str:
+    return ", ".join(str(p) for p in pages) if pages else "(all)"
+
+
+def ocr_python() -> Path | None:
+    """The OCR environment's interpreter, without installing anything."""
+    try:
+        from pm import environment_python
+        return environment_python(OCR_ENV)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def ocr_isolated(data: bytes, pages: list[int]) -> str:
+    """Text of scanned PDF pages, read by RapidOCR in the OCR environment (no language model)."""
+    python = ocr_python()
+    if python is None:
+        raise RuntimeError("local OCR is not installed (run `hermes grounded-web setup`)")
+    wanted = pages[:OCR_MAX_PAGES]
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    proc = await asyncio.create_subprocess_exec(
+        str(python), "-I", str(OCR_RUNNER), ",".join(str(p) for p in wanted), str(MAX_CONTENT_CHARS),
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(data), OCR_TIMEOUT)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError(f"OCR stopped after {OCR_TIMEOUT}s") from None
+    lines = [ln for ln in out.decode("utf-8", "replace").splitlines() if ln.startswith("{")]
+    result = json.loads(lines[-1]) if lines else {"error": "OCR gave no output"}
+    if result.get("error"):
+        raise RuntimeError(result["error"])
+    read = {int(k): v for k, v in (result.get("pages") or {}).items() if v.strip()}
+    if not read:
+        raise RuntimeError("OCR found no text on the scanned pages")
+    note = f"[Text read by OCR from scanned pages {_page_list(sorted(read))}; OCR can misread characters.]"
+    skipped = pages[OCR_MAX_PAGES:]
+    if skipped:
+        note += f" [Pages {_page_list(skipped)} were not read: OCR stops at {OCR_MAX_PAGES} pages.]"
+    body = "\n\n".join(f"[page {n}]\n{text}" for n, text in sorted(read.items()))
+    return f"{note}\n\n{body}"[:MAX_CONTENT_CHARS]
 
 
 def html_text(html: str, url: str) -> tuple[str, str]:
@@ -353,11 +413,17 @@ async def _read_page(client, url: str, slots: asyncio.Semaphore | None = None) -
             browser.cancel()
         if too_big:
             return Page(url, error=_origin(status, f"document larger than {MAX_DOC_BYTES // 2**20} MB"))
+        name = url.rstrip("/").rsplit("/", 1)[-1]
         try:
             text = await document_text_isolated(body, document_format(url, ctype, body)[1])
+        except NeedsOcr as scanned:
+            try:
+                return Page(url, name, await ocr_isolated(body, scanned.pages), engine="anydoc+ocr")
+            except Exception as exc:  # noqa: BLE001
+                return Page(url, error=_origin(status, f"{scanned}; {exc}"))
         except Exception as exc:  # noqa: BLE001
             return Page(url, error=_origin(status, f"unreadable document: {exc}"))
-        return Page(url, url.rstrip("/").rsplit("/", 1)[-1], text, engine="anydoc")
+        return Page(url, name, text, engine="anydoc")
 
     title, main = "", ""
     if not fetch_error:

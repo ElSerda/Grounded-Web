@@ -4,8 +4,9 @@ setup walks through what grounded-web needs and writes the Hermes config:
   1. a search backend: SearXNG (your instance) or DuckDuckGo (built into Hermes, no key);
   2. web_extract on grounded-web;
   3. optional Crawl4AI, in its own environment, driving the Chromium Hermes installs;
-  4. auto-loading the bundled research skill;
-  5. a live test: one real page, one 404.
+  4. optional local OCR for scanned PDFs (RapidOCR, no language model);
+  5. auto-loading the bundled research skill;
+  6. a live test: one real page, one 404.
 Every step is shown before it runs. Nothing is installed without a yes, or the matching flag.
 """
 
@@ -113,6 +114,7 @@ def state() -> dict:
         "ddgs": _has("ddgs"),
         "crawl4ai_python": c4ai,
         "chromium": browser.recorded(),
+        "ocr_python": extract.ocr_python(),
     }
 
 
@@ -142,6 +144,10 @@ def print_state(s: dict, title: str = "grounded-web status") -> None:
             error("Chromium           none recorded: run `hermes grounded-web setup`")
     else:
         warn("Crawl4AI           not installed (pages are read with trafilatura only)")
+    if s["ocr_python"]:
+        ok("OCR                RapidOCR installed (scanned PDFs are read locally)")
+    else:
+        warn("OCR                not installed (scanned PDFs come back as errors)")
     others = compat.other_reply_rewriters("grounded-web", getattr(_ctx, "has_plugin", None))
     if others:
         verb = "also rewrites" if len(others) == 1 else "also rewrite"
@@ -395,8 +401,38 @@ def step_crawl4ai(args, s: dict, interactive: bool) -> None:
 SKILL = "grounded-web:web-research"
 
 
+OCR_WARMUP = "from rapidocr import RapidOCR; RapidOCR(); print('models ready')"
+
+
+def step_ocr(args, s: dict, interactive: bool) -> None:
+    header("4. OCR for scanned PDFs (optional)")
+    info("A scanned PDF has no text, only page images. RapidOCR reads them on this machine, without a")
+    info("language model (about 1 s per page). It lives in its own environment (about 250 MB, with")
+    info("onnxruntime and pypdfium2) and downloads its models once (about 32 MB) from its official")
+    info("repository on modelscope.cn, checking their SHA-256.")
+    if s["ocr_python"]:
+        ok("OCR already installed")
+        return
+    wanted = args.ocr if args.ocr is not None else _confirm(
+        "Install local OCR?", True, interactive,
+        "RapidOCR: about 250 MB in its own environment plus 32 MB of models, checked by SHA-256.\n"
+        "Without it, scanned PDFs come back as errors that say which pages are scanned.")
+    if not wanted:
+        warn("Skipped. Run setup again to add it.")
+        return
+    from pm import ensure_environment
+    info("Preparing the environment (a few minutes the first time)...")
+    python = ensure_environment(extract.OCR_ENV, extract.OCR_REQUIREMENTS, explicit=True)
+    info("Downloading the OCR models...")
+    done = subprocess.run([str(python), "-I", "-c", OCR_WARMUP], capture_output=True, text=True)
+    if done.returncode == 0:
+        ok("OCR installed")
+    else:
+        error("The OCR models did not download; OCR stays off until they do. Run setup again.")
+
+
 def step_skill(args, interactive: bool) -> None:
-    header("4. Research skill")
+    header("5. Research skill")
     info(f"{SKILL} tells the model to open pages instead of answering from search snippets,")
     info("one URL per web_extract call. Auto-loading puts it in every new session (about 600 tokens).")
     current = ((_config().get("skills") or {}).get("auto_load")) or []
@@ -417,7 +453,7 @@ def step_skill(args, interactive: bool) -> None:
 
 
 def step_test() -> bool:
-    header("5. Test")
+    header("6. Test")
     page, missing = asyncio.run(extract.read_pages([TEST_PAGE, TEST_MISSING]))
     good = bool(page.content) and not page.error
     if good:
@@ -450,7 +486,7 @@ def uninstall(interactive: bool) -> int:
     header("Remove grounded-web's settings and downloads")
     info("Run this before `hermes plugins remove grounded-web`. It restores the web backends that")
     info("setup replaced, removes the research skill from auto-load, and deletes Crawl4AI's")
-    info("environment. Hermes's Chromium stays: it belongs to Hermes.")
+    info("and OCR environments. Hermes's Chromium stays: it belongs to Hermes.")
     if not _confirm("Remove grounded-web's settings and downloads?", True, interactive,
                     "Restores web backends, drops the skill from auto-load, deletes the Crawl4AI environment."):
         warn("Nothing changed.")
@@ -476,6 +512,10 @@ def uninstall(interactive: bool) -> int:
         env_dir = get_hermes_home() / "environments" / extract.CRAWL4AI_ENV
     except Exception:  # noqa: BLE001
         env_dir = None
+    ocr_dir = env_dir.parent / extract.OCR_ENV if env_dir is not None else None
+    if ocr_dir is not None and ocr_dir.exists():
+        _rmtree(ocr_dir)
+        ok(f"OCR environment deleted ({ocr_dir})")
     if env_dir is not None and env_dir.exists():
         _rmtree(env_dir)
         ok(f"Crawl4AI environment deleted ({env_dir})")
@@ -501,6 +541,9 @@ def _setup_parser(parser) -> None:
     c4 = setup.add_mutually_exclusive_group()
     c4.add_argument("--crawl4ai", dest="crawl4ai", action="store_true", default=None, help="Install Crawl4AI")
     c4.add_argument("--no-crawl4ai", dest="crawl4ai", action="store_false", help="Do not install Crawl4AI")
+    oc = setup.add_mutually_exclusive_group()
+    oc.add_argument("--ocr", dest="ocr", action="store_true", default=None, help="Install local OCR for scanned PDFs")
+    oc.add_argument("--no-ocr", dest="ocr", action="store_false", help="Do not install local OCR")
     sk = setup.add_mutually_exclusive_group()
     sk.add_argument("--skill", dest="skill", action="store_true", default=None, help="Auto-load the research skill")
     sk.add_argument("--no-skill", dest="skill", action="store_false", help="Do not auto-load the research skill")
@@ -532,6 +575,7 @@ def handle(args) -> int:
     step_search(args, s, interactive)
     step_extract(s)
     step_crawl4ai(args, s, interactive)
+    step_ocr(args, s, interactive)
     step_skill(args, interactive)
     passed = step_test()
     print_state(state(), "Saved settings")  # what was really saved, so a skipped step shows here

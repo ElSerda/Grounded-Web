@@ -83,3 +83,40 @@ def test_format_is_passed_when_known():
 def test_csv_is_read_as_a_table():
     text = asyncio.run(ex.document_text_isolated(b"plan,ram_gb,disk_gb\nplus,4,25\nultra,8,100\n", "csv"))
     assert "ultra" in text and "100" in text
+
+
+def scanned_pdf(tmp_path) -> bytes:
+    """A two-page PDF made only of images: what a scanner produces."""
+    Image = pytest.importorskip("PIL.Image")
+    ImageDraw = pytest.importorskip("PIL.ImageDraw")
+    pages = []
+    for line in ("Total power 360 W", "Memory 16 GB"):
+        img = Image.new("RGB", (600, 200), "white")
+        ImageDraw.Draw(img).text((20, 80), line, fill="black")
+        pages.append(img)
+    path = tmp_path / "scan.pdf"
+    pages[0].save(path, save_all=True, append_images=pages[1:])
+    return path.read_bytes()
+
+
+def test_scanned_pdf_reports_its_pages(tmp_path):
+    with pytest.raises(ex.NeedsOcr) as caught:
+        asyncio.run(ex.document_text_isolated(scanned_pdf(tmp_path), "pdf"))
+    assert caught.value.pages == [1, 2]
+
+
+def test_ocr_text_comes_back_with_a_note(tmp_path, monkeypatch):
+    fake = tmp_path / "fake_ocr.py"
+    fake.write_text('import json, sys\nsys.stdin.buffer.read()\n'
+                    'print(json.dumps({"pages": {"1": "Total power 360 W", "2": ""}}))\n')
+    monkeypatch.setattr(ex, "ocr_python", lambda: Path(sys.executable))
+    monkeypatch.setattr(ex, "OCR_RUNNER", fake)
+    text = asyncio.run(ex.ocr_isolated(b"%PDF-1.4", [1, 2]))
+    assert text.startswith("[Text read by OCR from scanned pages 1;")
+    assert "[page 1]\nTotal power 360 W" in text
+
+
+def test_without_ocr_the_error_says_how_to_turn_it_on(monkeypatch):
+    monkeypatch.setattr(ex, "ocr_python", lambda: None)
+    with pytest.raises(RuntimeError, match="hermes grounded-web setup"):
+        asyncio.run(ex.ocr_isolated(b"%PDF-1.4", [1]))

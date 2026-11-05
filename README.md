@@ -40,7 +40,7 @@ grounded-web fixes the first two, pushes against the third, and shows which page
 ## How a page is read
 
 1. Download it. An HTTP error (404, 410, 5xx) is reported as an error, unless a browser can still open the page.
-2. Documents (PDF, Office, OpenDocument, EPUB, RTF, CSV): Markdown, tables included, with anydoc, the converter Hermes's own `read_file` uses (its `doc-extract` extra, installed by `setup` or on first use). It runs in a separate process stopped after 60 seconds (and limited to 1 GB of memory on Linux and macOS), so a crafted document cannot hang Hermes. HTML: main text with trafilatura.
+2. Documents (PDF, Office, OpenDocument, EPUB, RTF, CSV): Markdown, tables included, with anydoc, the converter Hermes's own `read_file` uses (its `doc-extract` extra, installed by `setup` or on first use). It runs in a separate process stopped after 60 seconds (and limited to 1 GB of memory on Linux and macOS), so a crafted document cannot hang Hermes. A scanned PDF (page images, no text layer) is read by local OCR when it is installed: RapidOCR, no language model, about 1 second per page; the text comes with a note that it was read by OCR. Without OCR, the error names the scanned pages. HTML: main text with trafilatura.
 3. With Crawl4AI installed, the same page is also opened in a headless browser (the Chromium Hermes installs). Lines of the browser view that hold values missing from the main text, such as spec table rows, are appended under "More values from this page". Pages that trafilatura cannot read, because scripts build them, use the browser view instead.
 4. Bot walls ("Just a moment...", "Automated bot check") and short error pages that answer HTTP 200 are reported as errors, in Hermes's `HTTP <code> from origin: ...` form. Hermes then does not re-fetch them through its keyless rescue (an outside service that can return the same wall as content), and a wall that another backend returns is never listed as a source.
 
@@ -64,10 +64,11 @@ Hermes asks before installing the plugin's one Python dependency (trafilatura). 
 1. chooses a search backend: your **SearXNG** instance (it checks that JSON output is enabled) or **DuckDuckGo** (`ddgs`, built into Hermes, no key);
 2. sets `web.extract_backend: grounded-web`, and installs Hermes's document converter (`doc-extract`) if missing;
 3. offers **Crawl4AI**, which is optional;
-4. offers to auto-load the bundled skill `grounded-web:web-research` (it tells the model to open pages instead of answering from snippets, one URL per call; about 600 tokens per session);
-5. tests one real page and one missing page.
+4. offers **local OCR** for scanned PDFs (RapidOCR), which is optional;
+5. offers to auto-load the bundled skill `grounded-web:web-research` (it tells the model to open pages instead of answering from snippets, one URL per call; about 600 tokens per session);
+6. tests one real page and one missing page.
 
-Non-interactive: `hermes grounded-web setup --yes --search ddgs --crawl4ai --skill`.
+Non-interactive: `hermes grounded-web setup --yes --search ddgs --crawl4ai --ocr --skill`.
 Check at any time with `hermes grounded-web status`.
 
 ### Uninstall
@@ -77,7 +78,7 @@ hermes grounded-web uninstall
 hermes plugins remove grounded-web
 ```
 
-`uninstall` puts back the web backends `setup` replaced (it records them in `HERMES_HOME/plugin-data/grounded-web`), removes the skill from `skills.auto_load`, and deletes the Crawl4AI environment. Hermes's Chromium stays: it belongs to Hermes. `hermes plugins remove` alone would leave `web.extract_backend` pointing at a backend that no longer exists.
+`uninstall` puts back the web backends `setup` replaced (it records them in `HERMES_HOME/plugin-data/grounded-web`), removes the skill from `skills.auto_load`, and deletes the Crawl4AI and OCR environments. Hermes's Chromium stays: it belongs to Hermes. `hermes plugins remove` alone would leave `web.extract_backend` pointing at a backend that no longer exists.
 
 ### Crawl4AI
 
@@ -86,6 +87,12 @@ Crawl4AI pulls about 35 packages, so it is not installed into Hermes's environme
 grounded-web downloads no browser. Crawl4AI drives the Chromium that Hermes's own browser tool uses, found the way Hermes finds it: `browser.executable_path` in `config.yaml`, then the Chromium installed by `hermes pm install chromium` (pinned and checked by Hermes), then `/etc/hermes/chromium-executable-path` (Docker image), then a `chromium` on PATH. If there is none, `setup` offers `hermes pm install chromium`. For each page, a fresh headless instance starts with a temporary profile and a DevTools port on 127.0.0.1, Crawl4AI connects to it, and it is stopped and its profile deleted when the page is read.
 
 Without Crawl4AI, pages are read with trafilatura only, and lists and tables it takes for page furniture (the plan list above) stay out.
+
+### Local OCR
+
+Scanned PDFs hold page images, not text. With OCR installed, grounded-web renders the scanned pages (pypdfium2) and reads them with RapidOCR (PaddleOCR models in ONNX format, run by onnxruntime): no language model, no service, about 1 second per page, up to 30 pages per document. Like Crawl4AI, it lives in its own `hermes pm` environment (`HERMES_HOME/environments/grounded-web-ocr`, about 250 MB). On first use RapidOCR downloads its models (about 32 MB) from its official repository on modelscope.cn and checks each one against the SHA-256 it ships with.
+
+Hermes's own `read_file` routes scanned pages to a vision model instead (`vision_analyze`); grounded-web keeps that for what OCR cannot read, such as figures and handwriting.
 
 ## Settings
 
@@ -105,8 +112,8 @@ Search and page reading are separate settings: grounded-web only reads pages. It
 - **Web provider:** `grounded-web`, extract only.
 - **CLI:** `hermes grounded-web status|setup|uninstall`.
 - **Skill:** `grounded-web:web-research`, read-only, loaded only if you auto-load it or call it.
-- **Network:** downloads the URLs the agent asks `web_extract` to read, directly from this machine with a desktop browser user agent. `setup` also checks the SearXNG URL you give it and reads two test pages on iana.org. Crawl4AI's browser loads the same URLs and their page assets.
-- **Processes:** one Crawl4AI child process per page, at most three at once, each stopped after 60 seconds; it starts Hermes's Chromium headless (DevTools port on 127.0.0.1, temporary profile) and stops it before exiting; one child process per document (Hermes's own Python running `doc_reader.py` with anydoc), stopped after 60 seconds.
+- **Network:** downloads the URLs the agent asks `web_extract` to read, directly from this machine with a desktop browser user agent. `setup` also checks the SearXNG URL you give it and reads two test pages on iana.org; with OCR chosen, RapidOCR downloads its models once from modelscope.cn (SHA-256 checked). Crawl4AI's browser loads the same URLs and their page assets.
+- **Processes:** one Crawl4AI child process per page, at most three at once, each stopped after 60 seconds; it starts Hermes's Chromium headless (DevTools port on 127.0.0.1, temporary profile) and stops it before exiting; one child process per document (Hermes's own Python running `doc_reader.py` with anydoc), stopped after 60 seconds; for a scanned PDF with OCR installed, one more child process (`ocr_runner.py` in the OCR environment), stopped after 180 seconds.
 - **Writes:** `web.search_backend`, `web.extract_backend`, `skills.auto_load` and, for SearXNG, `SEARXNG_URL` in `.env`, all through Hermes's own config functions and only during `setup` and `uninstall`; the values `setup` replaced, in `HERMES_HOME/plugin-data/grounded-web/previous.json`; the Chromium path, in `browser.json` next to it. Nothing else is stored: page text lives in memory only, for at most 30 pages per conversation and 20 conversations, and is gone when Hermes stops.
 - **Reads:** the `plugin.yaml` of other installed plugins, to find reply rewriters; `hermes pm env chromium` and `browser.executable_path`, during `setup`, to find Hermes's Chromium.
 - **No telemetry**, no credentials read, no self-update.
@@ -128,6 +135,7 @@ Declared in `pyproject.toml`, installed by Hermes inside its own constraints:
 | Package | Range | Floor chosen because |
 |---|---|---|
 | trafilatura | `>=1.10,<3` | oldest release that accepts lxml 6, which Hermes pins (tested 1.10 to 2.3) |
+| rapidocr, onnxruntime, pypdfium2 | `>=3.10,<4`, `>=1.20,<2`, `>=5,<6` | separate OCR environment, installed by `setup`; tested with RapidOCR 3.10, onnxruntime 1.31 and Python 3.14 |
 | crawl4ai | `>=0.9.1,<0.10` | separate environment, installed by `setup`; 0.9.0 and older need lxml 5, which has no Python 3.14 wheels (tested 0.9.1 to 0.9.5) |
 
 ## Development
