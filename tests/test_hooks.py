@@ -157,7 +157,7 @@ def test_default_footer_is_sources_only_with_titles():
 
 
 def test_steps_aside_for_another_reply_rewriter(monkeypatch):
-    monkeypatch.setattr(gw.compat, "other_reply_rewriters", lambda own: ["other-footer"])
+    monkeypatch.setattr(gw.compat, "other_reply_rewriters", lambda own, has_plugin: ["other-footer"])
     ctx = setup()
     assert run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))]) is None
     ctx = setup({"show_sources": "always"})

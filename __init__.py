@@ -27,7 +27,6 @@ _lock = threading.Lock()
 _turns: dict[str, dict[str, Any]] = {}
 _sessions: "OrderedDict[str, OrderedDict[str, tuple[str, str]]]" = OrderedDict()  # url -> (title, text)
 _ctx = None
-_own_key = "grounded-web"
 
 
 def _setting(key: str, default):
@@ -128,7 +127,7 @@ def _append_footer(response_text: str = "", session_id: str = "", **_: Any) -> O
     mode = compat.sources_mode(_setting("show_sources", "auto"))
     # Hermes keeps only the first plugin rewrite of a reply: leave it to another rewriter rather
     # than hide its output, unless the user asked for this footer anyway (show_sources: always).
-    if mode == "auto" and compat.other_reply_rewriters(_own_key):
+    if mode == "auto" and compat.other_reply_rewriters("grounded-web", getattr(_ctx, "has_plugin", None)):
         return None
     pages = [{"url": u, "content": c} for u, (_, c) in known.items()]
     titles = {u: t for u, (t, _) in known.items()}
@@ -147,9 +146,8 @@ def _append_footer(response_text: str = "", session_id: str = "", **_: Any) -> O
 
 
 def register(ctx) -> None:
-    global _ctx, _own_key
+    global _ctx
     _ctx = ctx
-    _own_key = getattr(ctx, "plugin_id", None) or _own_key
     ctx.register_hook("pre_llm_call", _start_turn)
     ctx.register_hook("post_tool_call", _record_tool)
     ctx.register_hook("transform_llm_output", _append_footer)

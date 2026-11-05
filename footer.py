@@ -50,18 +50,33 @@ def _answer_language(text: str) -> str:
     return "fr" if len(_FRENCH_WORDS.findall(text)) > len(_ENGLISH_WORDS.findall(text)) else "en"
 
 
+def _hermes_language() -> str | None:
+    """Hermes's UI language, resolved as Hermes does: HERMES_LANGUAGE > display.language > en.
+    None outside Hermes (tests, tools)."""
+    try:
+        from agent.secret_scope import get_secret
+        from hermes_cli.config import load_config_readonly
+    except ImportError:
+        return None
+    try:
+        lang = (get_secret("HERMES_LANGUAGE") or "").strip()
+        if not lang:
+            display = (load_config_readonly() or {}).get("display") or {}
+            lang = str(display.get("language") or "en")
+    except Exception:  # noqa: BLE001
+        return None
+    return lang.lower().replace("_", "-").split("-")[0]
+
+
 def language_of(text: str, setting: str = "auto") -> str:
     """auto: Hermes's display.language, like Hermes's own trailers (other languages get English).
     answer: the language the answer is written in. en / fr: fixed."""
     if setting in _TEXT:
         return setting
     if setting == "auto":
-        try:
-            from agent.i18n import get_language
-            lang = (get_language() or "en").lower().split("-")[0]
+        lang = _hermes_language()
+        if lang is not None:
             return lang if lang in _TEXT else "en"
-        except Exception:  # noqa: BLE001 - outside Hermes (tests, tools): fall back to the answer
-            pass
     return _answer_language(text)
 
 

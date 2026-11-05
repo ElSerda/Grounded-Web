@@ -31,21 +31,31 @@ TEST_MISSING = "https://www.iana.org/grounded-web-test-page-that-does-not-exist"
 
 
 def _hermes_out(name: str):
-    """Hermes's setup output helper `name`, or None when this Hermes does not have it."""
+    """A helper from hermes_cli.cli_output (the documented wizard output module), or None."""
     try:
-        if name == "print_header":
-            from hermes_cli.setup import print_header as fn
-        else:
-            import hermes_cli.cli_output as out
-            fn = getattr(out, name)
-        return fn
+        import hermes_cli.cli_output as out
+        return getattr(out, name)
     except (ImportError, AttributeError):
         return None
 
 
+def _styled(text: str, code: str) -> str:
+    """ANSI style when writing to a colour terminal, like Hermes (NO_COLOR turns it off)."""
+    import os
+    if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
 def header(text: str) -> None:
-    fn = _hermes_out("print_header")
-    fn(text) if fn else print(f"\n== {text}")
+    # The cyan "◆" section header of `hermes setup`, drawn here: its helper is not a public API.
+    try:
+        "◆".encode(sys.stdout.encoding or "ascii")
+        mark = "◆"
+    except (UnicodeEncodeError, LookupError):
+        mark = "=="
+    print()
+    print(_styled(f"{mark} {text}", "1;36"))
 
 
 def info(text: str) -> None:
@@ -140,7 +150,7 @@ def print_state(s: dict, title: str = "grounded-web status") -> None:
         (ok if s["browser"] else error)("Headless Chromium  " + ("installed" if s["browser"] else "missing: run setup again"))
     else:
         warn("Crawl4AI           not installed (pages are read with trafilatura only)")
-    others = compat.other_reply_rewriters("grounded-web")
+    others = compat.other_reply_rewriters("grounded-web", getattr(_ctx, "has_plugin", None))
     if others:
         verb = "also rewrites" if len(others) == 1 else "also rewrite"
         warn(f"Reply rewriters    {', '.join(others)} {verb} replies, and Hermes keeps only one rewrite.")
@@ -152,38 +162,45 @@ def print_state(s: dict, title: str = "grounded-web status") -> None:
 
 
 def _ask(question: str, default: str, interactive: bool) -> str:
-    """A typed answer, with Hermes's own prompt style when it is available."""
+    """A typed answer through Hermes's documented wizard prompt (hermes_cli.cli_output.prompt)."""
     if not interactive:
         return default
-    try:
-        from hermes_cli.setup import prompt
-    except ImportError:
+    prompt = _hermes_out("prompt")
+    if prompt is None:
         return input(f"{question} [{default}] ").strip() or default
     return prompt(question.strip(), default) or default
 
 
 def _choose(title: str, options: list[tuple[str, str]], default: str, interactive: bool, description: str = "") -> str:
-    """One option key, picked with Hermes's own menu (arrows, Enter, Esc keeps the default).
+    """One option key, from a numbered radio list in the style of `hermes setup`.
 
-    Hermes falls back to a numbered list by itself when the terminal cannot draw the menu. If the
-    menu module is missing (a future Hermes), a plain typed answer is used instead.
+    Enter keeps the default; an answer that is not a listed number keeps it too and says so.
     """
     keys = [k for k, _ in options]
     selected = keys.index(default) if default in keys else 0
     if not interactive:
         return keys[selected]
+    print()
+    print(_styled(f"  {title}", "33"))
+    for line in description.splitlines() if description else []:
+        print(_styled(f"  {line}", "2"))
+    print(_styled("  Select by number, Enter to confirm.", "2"))
+    print()
     try:
-        from hermes_cli.curses_ui import curses_radiolist
-    except ImportError:
-        print(f"   {title}")
-        for key, label in options:
-            print(f"     {key:8} {label}")
-        answer = _ask("   Choice?", keys[selected], interactive).lower()
-        return answer if answer in keys else keys[selected]
-    labels = [f"{label}" for _, label in options]
-    index = curses_radiolist(title, labels, selected=selected, cancel_returns=selected,
-                             description=description or None)
-    return keys[index if 0 <= index < len(keys) else selected]
+        "●○◆".encode(sys.stdout.encoding or "ascii")
+        on, off = "(●)", "(○)"
+    except (UnicodeEncodeError, LookupError):  # a console code page without these glyphs
+        on, off = "(*)", "( )"
+    for i, (_, label) in enumerate(options):
+        mark = _styled(on, "32") if i == selected else off
+        print(f"  {mark} {i + 1:>2}. {label}")
+    print()
+    answer = _ask("Choice", str(selected + 1), interactive).strip()
+    if answer.isdigit() and 1 <= int(answer) <= len(keys):
+        return keys[int(answer) - 1]
+    if answer != str(selected + 1):
+        warn(f"{answer!r} is not one of the numbers above; keeping {selected + 1}.")
+    return keys[selected]
 
 
 def _confirm(question: str, default: bool, interactive: bool, description: str = "") -> bool:
@@ -194,6 +211,7 @@ def _confirm(question: str, default: bool, interactive: bool, description: str =
 # ---------------------------------------------------------------- what setup replaced, for uninstall
 
 PLUGIN_NAME = "grounded-web"
+_ctx = None
 RESTORED_KEYS = ("web.search_backend", "web.extract_backend")
 
 
@@ -563,6 +581,8 @@ def handle(args) -> int:
 
 
 def register(ctx) -> None:
+    global _ctx
+    _ctx = ctx  # for ctx.has_plugin in status
     ctx.register_cli_command(
         name="grounded-web",
         help="Set up and check grounded-web (search, page reading, Crawl4AI)",
