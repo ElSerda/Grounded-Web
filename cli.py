@@ -304,6 +304,8 @@ def handle(args) -> int:
     step_crawl4ai(args, s, interactive)
     step_skill(args, interactive)
     passed = step_test()
+    print()
+    print_state(state())  # what was really saved, so a skipped step shows here
     print("\nRestart Hermes (or `hermes gateway restart`) so running sessions pick up the changes.")
     return 0 if passed else 1
 

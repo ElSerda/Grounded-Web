@@ -15,6 +15,9 @@ _TEXT = {
         "checked": "Check: {found} of {total} values found in these pages.",
         "missing": "Not in the opened pages: {items}",
         "conflict": "Pages disagree after “{context}”: {values}",
+        "checked_snippets": "Check against the search snippets only: {found} of {total} values found.",
+        "missing_snippets": "Not in the snippets: {items}",
+        "conflict_snippets": "Snippets disagree after “{context}”: {values}",
     },
     "fr": {
         "sources": "Sources (pages ouvertes) :",
@@ -23,6 +26,9 @@ _TEXT = {
         "checked": "Vérification : {found} valeurs sur {total} retrouvées dans ces pages.",
         "missing": "Absent des pages ouvertes : {items}",
         "conflict": "Les pages divergent après « {context} » : {values}",
+        "checked_snippets": "Vérification sur les seuls extraits de recherche : {found} valeurs sur {total} retrouvées.",
+        "missing_snippets": "Absent des extraits : {items}",
+        "conflict_snippets": "Les extraits divergent après « {context} » : {values}",
     },
 }
 
@@ -41,8 +47,11 @@ def _site(url: str) -> str:
     return host[4:] if host.startswith("www.") else host or url
 
 
-def build(opened: list[str], searched: bool, report: Report | None, lang: str, show_sources: bool = True) -> str:
+def build(opened: list[str], searched: bool, report: Report | None, lang: str, show_sources: bool = True,
+          basis: str = "pages") -> str:
+    """basis: "pages" when the report checked opened pages, "snippets" when only search results."""
     t = _TEXT[lang]
+    suffix = "_snippets" if basis == "snippets" else ""
     lines: list[str] = []
     if show_sources:
         if opened:
@@ -53,10 +62,10 @@ def build(opened: list[str], searched: bool, report: Report | None, lang: str, s
     if report is not None and report.checked:
         if lines:
             lines.append("")
-        lines.append(t["checked"].format(found=len(report.grounded), total=len(report.checked)))
+        lines.append(t["checked" + suffix].format(found=len(report.grounded), total=len(report.checked)))
         if report.missing:
-            lines.append(t["missing"].format(items=", ".join(f.text for f in report.missing)))
+            lines.append(t["missing" + suffix].format(items=", ".join(f.text for f in report.missing)))
         for c in report.conflicts:
             values = " / ".join(f"{v} ({_site(u)})" for u, v in c.found.items())
-            lines.append(t["conflict"].format(context=c.context, values=values))
+            lines.append(t["conflict" + suffix].format(context=c.context, values=values))
     return "\n".join(lines)

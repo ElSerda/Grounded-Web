@@ -86,3 +86,16 @@ def test_settings_turn_parts_off():
     out = run_turn(ctx, "La carte consomme 360 W, pour 999 $.", [("web_extract", extract_result(PAGE))])
     assert "Sources (opened pages):" in out
     assert "Check:" not in out
+
+
+def search_result(*hits):
+    return json.dumps({"success": True, "data": {"web": [dict(h) for h in hits]}})
+
+
+def test_search_only_turn_is_checked_against_snippets():
+    ctx = setup()
+    hit = {"url": "https://maker.example/gpu", "title": "GPU X", "description": "GPU X draws 360 W, 16 GB GDDR7."}
+    out = run_turn(ctx, "La carte consomme 360 W et coûte 999 $.", [("web_search", search_result(hit))])
+    assert "Aucune page ouverte" in out
+    assert "Vérification sur les seuls extraits de recherche : 1 valeurs sur 2 retrouvées." in out
+    assert "Absent des extraits : 999 $" in out

@@ -46,6 +46,23 @@ def _pages(result: Any) -> list[dict]:
     ]
 
 
+def _snippets(result: Any) -> list[dict]:
+    """Search hits as pseudo-pages (title + description), from a web_search result."""
+    text = str(result or "")
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
+        return []
+    try:
+        data = json.loads(text[start:end + 1])
+    except ValueError:
+        return []
+    hits = ((data.get("data") or {}).get("web") if isinstance(data, dict) else None) or []
+    return [
+        {"url": h["url"], "content": f"{h.get('title', '')}\n{h.get('description', '')}"}
+        for h in hits if isinstance(h, dict) and h.get("url")
+    ]
+
+
 def _start_turn(session_id: str = "", **_: Any) -> None:
     # An interrupted turn never reaches the transform hook, so its pages are dropped here.
     with _lock:
@@ -56,10 +73,13 @@ def _record_tool(tool_name: str = "", result: Any = None, session_id: str = "", 
     if tool_name not in ("web_search", "web_extract"):
         return
     pages = _pages(result) if tool_name == "web_extract" else []
+    hits = _snippets(result) if tool_name == "web_search" else []
     with _lock:
-        turn = _turns.setdefault(session_id, {"pages": {}, "searched": False})
+        turn = _turns.setdefault(session_id, {"pages": {}, "searched": False, "snippets": {}})
         if tool_name == "web_search":
             turn["searched"] = True
+        for hit in hits:
+            turn["snippets"].setdefault(hit["url"], hit["content"])
         for page in pages:
             turn["pages"].setdefault(page["url"], page["content"])
 
@@ -70,9 +90,13 @@ def _append_footer(response_text: str = "", session_id: str = "", **_: Any) -> O
     if turn is None or not response_text:
         return None
     pages = [{"url": u, "content": c} for u, c in turn["pages"].items()]
+    # No page opened: check against the search snippets instead, and say so.
+    basis = "pages" if pages else "snippets"
+    if not pages:
+        pages = [{"url": u, "content": c} for u, c in turn.get("snippets", {}).items()]
     report = verify.check(response_text, pages) if pages and _setting("verify", True) else None
     lang = footer.language_of(response_text, _setting("language", "auto"))
-    text = footer.build(list(turn["pages"]), turn["searched"], report, lang, _setting("show_sources", True))
+    text = footer.build(list(turn["pages"]), turn["searched"], report, lang, _setting("show_sources", True), basis)
     # Keep the answer byte for byte: Hermes then prints only the added footer after a streamed reply.
     return f"{response_text}\n\n{text}" if text else None
 
