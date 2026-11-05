@@ -117,3 +117,7 @@ def test_llms_txt_can_be_turned_off():
     client = FakeClient({"https://docs.example/llms.txt": Response(200, LLMS)})
     assert asyncio.run(ex._from_llms_txt(client, "https://docs.example/specs")) == (None, "")
     assert client.calls == []
+
+
+def test_llms_txt_saved_with_a_byte_order_mark_is_read():
+    assert sr.parse_llms_txt(chr(0xFEFF) + LLMS, "https://docs.example")

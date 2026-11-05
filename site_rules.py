@@ -24,6 +24,7 @@ LLMS_MAX_BYTES = 2 * 1024 * 1024
 LLMS_TIMEOUT = 8
 MAX_SITES = 200
 
+BOM = chr(0xFEFF)  # byte order mark that some editors put at the start of a text file
 _LINK = re.compile(r"\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
 _lock = threading.Lock()
 _sites: "OrderedDict[str, tuple[float, frozenset[str] | None]]" = OrderedDict()
@@ -72,7 +73,7 @@ def _origin(url: str) -> str:
 
 def parse_llms_txt(text: str, base: str) -> frozenset[str] | None:
     """The URLs an llms.txt links to, or None when the text is not an llms.txt."""
-    body = text.lstrip("﻿ \t\r\n")
+    body = text.lstrip(BOM + " \t\r\n")
     if not body.startswith("# ") or body[:200].lower().lstrip().startswith(("<!doctype", "<html")):
         return None
     return frozenset(urljoin(base + "/", m.group(1)) for m in _LINK.finditer(body))
