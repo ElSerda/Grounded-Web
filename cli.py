@@ -3,7 +3,7 @@
 setup walks through what grounded-web needs and writes the Hermes config:
   1. a search backend: SearXNG (your instance) or DuckDuckGo (built into Hermes, no key);
   2. web_extract on grounded-web;
-  3. optional Crawl4AI, in its own environment, with a headless Chromium (about 300 MB);
+  3. optional Crawl4AI, in its own environment, driving the Chromium Hermes installs;
   4. auto-loading the bundled research skill;
   5. a live test: one real page, one 404.
 Every step is shown before it runs. Nothing is installed without a yes, or the matching flag.
@@ -19,7 +19,7 @@ import stat
 import subprocess
 import sys
 
-from . import compat, extract
+from . import browser, compat, extract
 
 CRAWL4AI_REQUIREMENT = "crawl4ai>=0.9.1,<0.10"  # 0.9.0 and older need lxml 5: no Python 3.14 wheels
 TEST_PAGE = "https://www.iana.org/help/example-domains"
@@ -101,18 +101,6 @@ def _has(module: str) -> bool:
     return importlib.util.find_spec(module) is not None
 
 
-def _browser_ready(python) -> bool:
-    """True when Playwright's headless shell for this Crawl4AI is already downloaded."""
-    if python is None:
-        return False
-    out = subprocess.run([str(python), "-m", "playwright", "install", "--only-shell", "--dry-run", "chromium"],
-                         capture_output=True, text=True, timeout=60)
-    from pathlib import Path
-    paths = [line.split(":", 1)[1].strip() for line in out.stdout.splitlines() if "Install location" in line]
-    shell = [p for p in paths if "headless_shell" in p]
-    return bool(shell) and all(Path(p).exists() for p in shell)
-
-
 def state() -> dict:
     web = (_config().get("web") or {})
     c4ai = extract.crawl4ai_python()
@@ -124,7 +112,7 @@ def state() -> dict:
         "pypdf": _has("pypdf"),
         "ddgs": _has("ddgs"),
         "crawl4ai_python": c4ai,
-        "browser": _browser_ready(c4ai),
+        "chromium": browser.recorded(),
     }
 
 
@@ -147,7 +135,10 @@ def print_state(s: dict, title: str = "grounded-web status") -> None:
         (ok if s["ddgs"] else error)("DuckDuckGo (ddgs)  " + ("installed" if s["ddgs"] else "missing"))
     if s["crawl4ai_python"]:
         ok("Crawl4AI           installed")
-        (ok if s["browser"] else error)("Headless Chromium  " + ("installed" if s["browser"] else "missing: run setup again"))
+        if s["chromium"]:
+            ok(f"Chromium           {s['chromium']}")
+        else:
+            error("Chromium           none recorded: run `hermes grounded-web setup`")
     else:
         warn("Crawl4AI           not installed (pages are read with trafilatura only)")
     others = compat.other_reply_rewriters("grounded-web", getattr(_ctx, "has_plugin", None))
@@ -343,31 +334,52 @@ def step_extract(s: dict) -> None:
         _set("web.extract_backend", "grounded-web")
 
 
+def _find_chromium(interactive: bool):
+    """Hermes's Chromium, installing it with `hermes pm install chromium` if needed and wanted."""
+    path, source = browser.resolve()
+    if path is not None:
+        ok(f"Chromium from {source}: {path}")
+        return path
+    warn("No Chromium found (browser.executable_path, `hermes pm`, /etc/hermes, PATH).")
+    if not _confirm("Install Hermes's Chromium with `hermes pm install chromium`?", True, interactive,
+                    "Hermes's own pinned Chromium, the one its browser tool uses. Crawl4AI drives it."):
+        return None
+    hermes = shutil.which("hermes")
+    if hermes is None or subprocess.run([hermes, "pm", "install", "chromium"]).returncode != 0:
+        error("`hermes pm install chromium` failed.")
+        return None
+    path, source = browser.resolve()
+    if path is not None:
+        ok(f"Chromium from {source}: {path}")
+    return path
+
+
 def step_crawl4ai(args, s: dict, interactive: bool) -> None:
     header("3. Crawl4AI (optional)")
     info("Opens each page in a headless browser as well. It recovers values that the main")
     info("text reader drops (spec tables) and pages built by scripts. It lives in its own")
-    info("environment, apart from Hermes's packages: about 35 packages and a 280 MB")
-    info("headless Chromium in Playwright's browser folder.")
-    if s["crawl4ai_python"] and s["browser"]:
+    info("environment, apart from Hermes's packages (about 35 packages), and drives the")
+    info("Chromium Hermes already installs: grounded-web downloads no browser.")
+    if s["crawl4ai_python"] and s["chromium"]:
         ok("Crawl4AI already installed")
         return
     wanted = args.crawl4ai if args.crawl4ai is not None else _confirm(
         "Install Crawl4AI?", True, interactive,
-        "Crawl4AI: about 35 packages in their own environment, plus a 280 MB headless Chromium.\n"
+        "Crawl4AI: about 35 packages in their own environment; it uses Hermes's Chromium.\n"
         "It recovers spec tables and script-built pages that the main text reader misses.")
     if not wanted:
         warn("Skipped. Pages are read with trafilatura alone; run setup again to add it.")
         return
-    from pm import ensure_environment
-    info("Preparing the environment (a few minutes the first time)...")
-    python = ensure_environment(extract.CRAWL4AI_ENV, [CRAWL4AI_REQUIREMENT], explicit=True)
-    info("Downloading the headless Chromium...")
-    done = subprocess.run([str(python), "-m", "playwright", "install", "--only-shell", "chromium"])
-    if done.returncode != 0:
-        error("The browser download failed; Crawl4AI stays off until it succeeds.")
-    else:
-        ok("Crawl4AI installed")
+    if not s["crawl4ai_python"]:
+        from pm import ensure_environment
+        info("Preparing the environment (a few minutes the first time)...")
+        ensure_environment(extract.CRAWL4AI_ENV, [CRAWL4AI_REQUIREMENT], explicit=True)
+    chromium = _find_chromium(interactive)
+    if chromium is None:
+        error("Crawl4AI stays off until a Chromium is available.")
+        return
+    browser.record(chromium)
+    ok("Crawl4AI installed")
 
 
 SKILL = "grounded-web:web-research"
@@ -421,63 +433,6 @@ def _rmtree(path) -> None:
     shutil.rmtree(path, onexc=clear_readonly) if sys.version_info >= (3, 12) else shutil.rmtree(path, onerror=clear_readonly)
 
 
-def _browser_dirs_in_use_elsewhere(own_package) -> set[str]:
-    """Browser folder names (e.g. chromium_headless_shell-1248) that other registered Playwright
-    installs on this machine need, read from each one's browsers.json."""
-    from pathlib import Path
-    import os
-    root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or "")
-    if not root.name:
-        local = os.environ.get("LOCALAPPDATA")
-        root = Path(local) / "ms-playwright" if local else Path.home() / ".cache" / "ms-playwright"
-        if sys.platform == "darwin":
-            root = Path.home() / "Library" / "Caches" / "ms-playwright"
-    needed: set[str] = set()
-    for link in (root / ".links").glob("*") if (root / ".links").is_dir() else []:
-        try:
-            package = Path(link.read_text(encoding="utf-8").strip())
-        except OSError:
-            continue
-        if own_package and package.resolve() == own_package.resolve():
-            continue
-        try:
-            data = json.loads((package / "browsers.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue  # that install is gone: its browsers are not ours to judge
-        for b in data.get("browsers", []):
-            needed.add(f"{str(b.get('name', '')).replace('-', '_')}-{b.get('revision', '')}")
-    return needed
-
-
-def _remove_own_browsers(python) -> list[str]:
-    """Delete the browser folders Crawl4AI's Playwright installed, unless another install needs them."""
-    from pathlib import Path
-    out = subprocess.run([str(python), "-m", "playwright", "install", "--only-shell", "--dry-run", "chromium"],
-                         capture_output=True, text=True, timeout=60)
-    ours = [Path(line.split(":", 1)[1].strip()) for line in out.stdout.splitlines() if "Install location" in line]
-    try:
-        package = Path(subprocess.run([str(python), "-c", "import playwright, pathlib; print(pathlib.Path(playwright.__file__).parent / 'driver' / 'package')"],
-                                      capture_output=True, text=True, timeout=60).stdout.strip())
-    except Exception:  # noqa: BLE001
-        package = None
-    elsewhere = _browser_dirs_in_use_elsewhere(package)
-    removed = []
-    if package is not None and ours:  # drop this install's registration in Playwright's .links
-        for link in (ours[0].parent / ".links").glob("*"):
-            try:
-                if Path(link.read_text(encoding="utf-8").strip()).resolve() == package.resolve():
-                    link.unlink()
-            except OSError:
-                continue
-    for folder in ours:
-        if folder.exists() and folder.name not in elsewhere:
-            _rmtree(folder)
-            removed.append(folder.name)
-        elif folder.exists():
-            info(f"Kept {folder.name}: another Playwright install on this machine uses it.")
-    return removed
-
-
 def uninstall(interactive: bool) -> int:
     """Undo what setup did, so `hermes plugins remove grounded-web` leaves nothing behind."""
     from hermes_cli.config import set_config_value, unset_config_value
@@ -485,9 +440,9 @@ def uninstall(interactive: bool) -> int:
     header("Remove grounded-web's settings and downloads")
     info("Run this before `hermes plugins remove grounded-web`. It restores the web backends that")
     info("setup replaced, removes the research skill from auto-load, and deletes Crawl4AI's")
-    info("environment and its headless Chromium.")
+    info("environment. Hermes's Chromium stays: it belongs to Hermes.")
     if not _confirm("Remove grounded-web's settings and downloads?", True, interactive,
-                    "Restores web backends, drops the skill from auto-load, deletes Crawl4AI and its Chromium."):
+                    "Restores web backends, drops the skill from auto-load, deletes the Crawl4AI environment."):
         warn("Nothing changed.")
         return 1
     previous = _previous()
@@ -506,11 +461,6 @@ def uninstall(interactive: bool) -> int:
     auto = _config_value("skills.auto_load")
     if isinstance(auto, list) and SKILL in auto:
         set_config_value("skills.auto_load", json.dumps([name for name in auto if name != SKILL]))
-    python = extract.crawl4ai_python()
-    if python is not None:
-        removed = _remove_own_browsers(python)
-        if removed:
-            ok(f"Browser files removed: {', '.join(removed)}")
     try:
         from hermes_constants import get_hermes_home
         env_dir = get_hermes_home() / "environments" / extract.CRAWL4AI_ENV

@@ -22,7 +22,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import values
+from . import browser, values
 
 logger = logging.getLogger(__name__)
 
@@ -227,9 +227,12 @@ async def _browser_view(url: str) -> dict:
     python = crawl4ai_python()
     if python is None:
         return {"success": False, "error": "crawl4ai not installed"}
+    chromium = browser.recorded()
+    if chromium is None:
+        return {"success": False, "error": "no Chromium recorded: run `hermes grounded-web setup`"}
     env = {**os.environ, "CRAWL4AI_NO_CLOUD_NOTICE": "1", "PYTHONIOENCODING": "utf-8"}
     proc = await asyncio.create_subprocess_exec(
-        str(python), "-I", str(RUNNER), url,
+        str(python), "-I", str(RUNNER), url, str(chromium),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
     )
     try:

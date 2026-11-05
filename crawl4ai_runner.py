@@ -1,19 +1,62 @@
 """Opens one URL with Crawl4AI and prints one JSON line. Runs in grounded-web's isolated environment.
 
-Kept out of Hermes's own environment because Crawl4AI pulls about 35 packages and a browser.
+    python crawl4ai_runner.py URL CHROMIUM_EXECUTABLE
+
+Crawl4AI drives the Chromium Hermes already installs (`hermes pm install chromium`), started here
+headless with a DevTools port and connected over CDP, so the plugin downloads no browser of its own.
+Kept out of Hermes's environment because Crawl4AI pulls about 35 packages.
 Output: {"success", "status", "title", "markdown", "error"}; markdown is Crawl4AI's pruned
 ("fit") markdown, falling back to the full markdown when pruning leaves almost nothing.
 """
 
 import asyncio
 import json
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
+import time
 import warnings
 
 warnings.filterwarnings("ignore")
+DEVTOOLS_WAIT = 20
+# Below the plugin's 60 s cap on this process, so the crawl always ends here and Chromium is
+# stopped by this script: killing the script from outside would leave Chromium running on Windows.
+CRAWL_TIMEOUT = 45
 
 
-async def main(url: str) -> dict:
+def start_chromium(executable: str):
+    """Start Chromium headless on a free DevTools port. Returns (process, ws_url, profile_dir)."""
+    profile = tempfile.mkdtemp(prefix="grounded-web-chromium-")
+    proc = subprocess.Popen(
+        [executable, "--headless=new", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
+         f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check", "--disable-gpu",
+         "--disable-extensions", "--mute-audio", "about:blank"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+    )
+    deadline = time.monotonic() + DEVTOOLS_WAIT
+    while time.monotonic() < deadline:
+        line = proc.stderr.readline()
+        if not line and proc.poll() is not None:
+            break
+        m = re.search(r"DevTools listening on (ws://\S+)", line)
+        if m:
+            return proc, m.group(1), profile
+    stop_chromium(proc, profile)
+    raise RuntimeError("Chromium did not open its DevTools port")
+
+
+def stop_chromium(proc, profile: str) -> None:
+    proc.kill()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+    shutil.rmtree(profile, ignore_errors=True)
+
+
+async def crawl(url: str, ws_url: str) -> dict:
     from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
     from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 
@@ -24,11 +67,12 @@ async def main(url: str) -> dict:
 
     run = CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,
-        page_timeout=45_000,
+        page_timeout=35_000,
         markdown_generator=DefaultMarkdownGenerator(content_filter=Pruning()),
         verbose=False,
     )
-    async with AsyncWebCrawler(config=BrowserConfig(headless=True, verbose=False)) as crawler:
+    browser = BrowserConfig(cdp_url=ws_url, browser_mode="cdp", headless=True, verbose=False)
+    async with AsyncWebCrawler(config=browser) as crawler:
         r = await crawler.arun(url=url, config=run)
     if not r.success:
         return {"success": False, "status": r.status_code, "error": str(r.error_message or "crawl failed")[:300]}
@@ -39,9 +83,18 @@ async def main(url: str) -> dict:
     return {"success": True, "status": r.status_code, "title": title, "markdown": fit if len(fit) > 200 else full}
 
 
+def main(url: str, executable: str) -> dict:
+    proc, ws_url, profile = start_chromium(executable)
+    try:
+        return asyncio.run(asyncio.wait_for(crawl(url, ws_url), CRAWL_TIMEOUT))
+    finally:
+        stop_chromium(proc, profile)
+
+
 if __name__ == "__main__":
     try:
-        result = asyncio.run(main(sys.argv[1]))
+        result = main(sys.argv[1], sys.argv[2])
     except Exception as exc:  # noqa: BLE001 - reported to the caller as the page's error
         result = {"success": False, "error": f"{exc.__class__.__name__}: {exc}"[:300]}
     sys.stdout.write("\n" + json.dumps(result) + "\n")  # ASCII-only: the console code page varies
+    sys.stdout.flush()

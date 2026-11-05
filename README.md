@@ -41,7 +41,7 @@ grounded-web fixes the first two, pushes against the third, and shows which page
 
 1. Download it. An HTTP error (404, 410, 5xx) is reported as an error, unless a browser can still open the page.
 2. PDF: text with pypdf, in a separate process stopped after 60 seconds (and limited to 1 GB of memory on Linux and macOS): pypdf keeps getting fixes for crafted PDFs that loop or exhaust memory, and a bad one must not hang Hermes. HTML: main text with trafilatura.
-3. With Crawl4AI installed, the same page is also opened in a headless browser. Lines of the browser view that hold values missing from the main text, such as spec table rows, are appended under "More values from this page". Pages that trafilatura cannot read, because scripts build them, use the browser view instead.
+3. With Crawl4AI installed, the same page is also opened in a headless browser (the Chromium Hermes installs). Lines of the browser view that hold values missing from the main text, such as spec table rows, are appended under "More values from this page". Pages that trafilatura cannot read, because scripts build them, use the browser view instead.
 4. Bot walls ("Just a moment...", "Automated bot check") and short error pages that answer HTTP 200 are reported as errors, in Hermes's `HTTP <code> from origin: ...` form. Hermes then does not re-fetch them through its keyless rescue (an outside service that can return the same wall as content), and a wall that another backend returns is never listed as a source.
 
 Each page is capped at 30,000 characters.
@@ -77,11 +77,13 @@ hermes grounded-web uninstall
 hermes plugins remove grounded-web
 ```
 
-`uninstall` puts back the web backends `setup` replaced (it records them in `HERMES_HOME/plugin-data/grounded-web`), removes the skill from `skills.auto_load`, and deletes the Crawl4AI environment and its browser files. A browser folder is kept when another Playwright install on the machine declares the same version. `hermes plugins remove` alone would leave `web.extract_backend` pointing at a backend that no longer exists.
+`uninstall` puts back the web backends `setup` replaced (it records them in `HERMES_HOME/plugin-data/grounded-web`), removes the skill from `skills.auto_load`, and deletes the Crawl4AI environment. Hermes's Chromium stays: it belongs to Hermes. `hermes plugins remove` alone would leave `web.extract_backend` pointing at a backend that no longer exists.
 
 ### Crawl4AI
 
-Crawl4AI pulls about 35 packages and a browser, so it is not installed into Hermes's environment. `setup` creates a separate environment with `hermes pm` (`HERMES_HOME/environments/grounded-web-crawl4ai`). It then downloads Playwright's headless Chromium shell (about 280 MB) to Playwright's browser folder (`%LOCALAPPDATA%\ms-playwright` on Windows, `~/.cache/ms-playwright` on Linux, `~/Library/Caches/ms-playwright` on macOS). That folder is outside `HERMES_HOME`: uninstalling Hermes does not remove it.
+Crawl4AI pulls about 35 packages, so it is not installed into Hermes's environment: `setup` creates a separate one with `hermes pm` (`HERMES_HOME/environments/grounded-web-crawl4ai`).
+
+grounded-web downloads no browser. Crawl4AI drives the Chromium that Hermes's own browser tool uses, found the way Hermes finds it: `browser.executable_path` in `config.yaml`, then the Chromium installed by `hermes pm install chromium` (pinned and checked by Hermes), then `/etc/hermes/chromium-executable-path` (Docker image), then a `chromium` on PATH. If there is none, `setup` offers `hermes pm install chromium`. For each page, a fresh headless instance starts with a temporary profile and a DevTools port on 127.0.0.1, Crawl4AI connects to it, and it is stopped and its profile deleted when the page is read.
 
 Without Crawl4AI, pages are read with trafilatura only, and lists and tables it takes for page furniture (the plan list above) stay out.
 
@@ -104,9 +106,9 @@ Search and page reading are separate settings: grounded-web only reads pages. It
 - **CLI:** `hermes grounded-web status|setup|uninstall`.
 - **Skill:** `grounded-web:web-research`, read-only, loaded only if you auto-load it or call it.
 - **Network:** downloads the URLs the agent asks `web_extract` to read, directly from this machine with a desktop browser user agent. `setup` also checks the SearXNG URL you give it and reads two test pages on iana.org. Crawl4AI's browser loads the same URLs and their page assets.
-- **Processes:** one Crawl4AI child process per page, at most three at once, each stopped after 60 seconds; one child process per PDF (Hermes's own Python running `pdf_reader.py`), stopped after 60 seconds.
-- **Writes:** `web.search_backend`, `web.extract_backend`, `skills.auto_load` and, for SearXNG, `SEARXNG_URL` in `.env`, all through Hermes's own config functions and only during `setup` and `uninstall`; the values `setup` replaced, in `HERMES_HOME/plugin-data/grounded-web/previous.json`. Nothing else is stored: page text lives in memory only, for at most 30 pages per conversation and 20 conversations, and is gone when Hermes stops.
-- **Reads:** the `plugin.yaml` of other installed plugins, to find reply rewriters; Playwright's `.links` registrations and `browsers.json`, during `uninstall` only.
+- **Processes:** one Crawl4AI child process per page, at most three at once, each stopped after 60 seconds; it starts Hermes's Chromium headless (DevTools port on 127.0.0.1, temporary profile) and stops it before exiting; one child process per PDF (Hermes's own Python running `pdf_reader.py`), stopped after 60 seconds.
+- **Writes:** `web.search_backend`, `web.extract_backend`, `skills.auto_load` and, for SearXNG, `SEARXNG_URL` in `.env`, all through Hermes's own config functions and only during `setup` and `uninstall`; the values `setup` replaced, in `HERMES_HOME/plugin-data/grounded-web/previous.json`; the Chromium path, in `browser.json` next to it. Nothing else is stored: page text lives in memory only, for at most 30 pages per conversation and 20 conversations, and is gone when Hermes stops.
+- **Reads:** the `plugin.yaml` of other installed plugins, to find reply rewriters; `hermes pm env chromium` and `browser.executable_path`, during `setup`, to find Hermes's Chromium.
 - **No telemetry**, no credentials read, no self-update.
 
 ## Other plugins that rewrite replies
