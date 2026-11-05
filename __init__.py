@@ -76,11 +76,35 @@ REMINDER = (
     "[grounded-web] If you search the web for this message: search snippets are not sources. "
     "Open the most relevant results with web_extract, one URL per call, before answering. "
     "If a web_extract result lists pages it did not open, open the ones you still need. "
-    "The pages you open are listed under your answer."
+    "The pages you open are listed under your answer; do not write that list yourself."
 )
 
 
-def _start_turn(session_id: str = "", user_message: Any = "", **_: Any) -> Optional[str]:
+def _pages_from_history(history: Any) -> list[dict]:
+    """Pages that web_extract returned earlier in the conversation, from Hermes's message list."""
+    names: dict[str, str] = {}
+    pages: list[dict] = []
+    for message in history if isinstance(history, list) else []:
+        if not isinstance(message, dict):
+            continue
+        for call in message.get("tool_calls") or []:
+            if isinstance(call, dict):
+                fn = call.get("function") or {}
+                names[str(call.get("id"))] = str(fn.get("name") or call.get("name") or "")
+        if message.get("role") == "tool":
+            name = message.get("name") or names.get(str(message.get("tool_call_id")), "")
+            if name == "web_extract":
+                pages.extend(_pages(message.get("content")))
+    return pages
+
+
+def _start_turn(session_id: str = "", user_message: Any = "", conversation_history: Any = None,
+                **_: Any) -> Optional[str]:
+    # A resumed conversation runs in a new process: its earlier pages come back from the history.
+    if session_id not in _sessions and conversation_history:
+        for page in _pages_from_history(conversation_history):
+            with _lock:
+                _remember(session_id, page["url"], page["title"], page["content"])
     # An interrupted turn never reaches the transform hook, so its record is dropped here.
     with _lock:
         _turns.pop(session_id, None)
@@ -188,8 +212,8 @@ def _append_footer(response_text: str = "", session_id: str = "", **_: Any) -> O
     with _lock:
         turn = _turns.pop(session_id, None)
         known = dict(_sessions.get(session_id, {}))
-    if turn is None or not response_text:
-        return None  # no web tool this turn: nothing to report
+    if not response_text or (turn is None and not known):
+        return None  # no web tool this turn and no page read before: nothing to report
     mode = compat.sources_mode(_setting("show_sources", "auto"))
     # Hermes keeps only the first plugin rewrite of a reply: leave it to another rewriter rather
     # than hide its output, unless the user asked for this footer anyway (show_sources: always).
@@ -198,11 +222,14 @@ def _append_footer(response_text: str = "", session_id: str = "", **_: Any) -> O
     if mode == "auto" and compat.other_reply_rewriters("grounded-web", getattr(_ctx, "has_plugin", None)):
         return None
     titles = {u: t for u, (t, _) in known.items()}
+    opened = turn["opened"] if turn else []
     # Pages from earlier turns are listed only when the answer uses one of their values.
-    earlier_pages = [{"url": u, "content": c} for u, (_, c) in known.items() if u not in turn["opened"]]
+    earlier_pages = [{"url": u, "content": c} for u, (_, c) in known.items() if u not in opened]
     earlier = values.pages_used(response_text, earlier_pages) if earlier_pages else []
+    if turn is None and not earlier:
+        return None  # a turn without web tools that does not draw on an earlier page
     lang = footer.language_of(response_text, _setting("language", "auto"))
-    text = footer.build(turn["opened"], turn["searched"], lang, earlier, titles)
+    text = footer.build(opened, bool(turn and turn["searched"]), lang, earlier, titles)
     # Keep the answer byte for byte: Hermes then prints only the added footer after a streamed reply.
     return f"{response_text}\n\n{text}" if text else None
 

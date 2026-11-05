@@ -100,6 +100,39 @@ def test_earlier_page_is_listed_only_when_the_answer_uses_it():
     assert "maker.example" not in out
 
 
+def test_follow_up_without_web_tools_lists_the_earlier_page_it_uses():
+    # Found with Nemotron: "and how much power does it draw?" answered from the page opened before.
+    ctx = setup()
+    run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))])
+    out = run_turn(ctx, "La carte consomme 360 W et il faut une alimentation de 850 W.", [])
+    assert out.endswith("Aussi utilisées, ouvertes plus tôt dans la conversation :\n- https://maker.example/gpu")
+    assert "Sources (pages ouvertes)" not in out
+    assert run_turn(ctx, "Avec plaisir.", []) is None  # no value from the page: nothing added
+
+
+def test_resumed_conversation_gets_its_earlier_pages_from_the_history():
+    ctx = setup()  # a new process: the plugin has no memory of the conversation
+    history = [
+        {"role": "user", "content": "specs?"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "web_extract", "arguments": "{}"}},
+            {"id": "c2", "type": "function", "function": {"name": "web_search", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "<untrusted_tool_result>\n" + extract_result(PAGE) + "\n</untrusted_tool_result>"},
+        {"role": "tool", "tool_call_id": "c2", "content": extract_result(REVIEW)},  # not web_extract: ignored
+        {"role": "assistant", "content": "It draws 360 W."},
+    ]
+    h = ctx.hooks
+    h["pre_llm_call"](session_id="s9", user_message="and the power?", conversation_history=history)
+    out = h["transform_llm_output"](response_text="La carte consomme 360 W et le boost est à 2,62 GHz.", session_id="s9", model="m", platform="cli")
+    assert out.endswith("Aussi utilisées, ouvertes plus tôt dans la conversation :\n- https://maker.example/gpu")
+    assert "review.example" not in out
+
+
+def test_reminder_asks_the_model_not_to_write_the_list():
+    ctx = setup()
+    assert "do not write that list yourself" in ctx.hooks["pre_llm_call"](session_id="s1", user_message="q")
+
+
 def test_sessions_do_not_share_pages():
     ctx = setup()
     run_turn(ctx, "La carte consomme 360 W.", [("web_extract", extract_result(PAGE))], session="a")

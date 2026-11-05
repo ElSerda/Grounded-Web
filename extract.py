@@ -56,10 +56,12 @@ _WALL_RE = re.compile(
     r"please enable (?:javascript|cookies))\b",
     re.IGNORECASE,
 )
-# Error pages: only when the page is short, since articles mention these words too.
+# Error pages: only when the page is short, since articles mention these words too. A bare 404 or
+# 410 is not enough: data has those numbers too (a CSV with 404 passengers in a month).
 _ERROR_RE = re.compile(
-    r"\b(?:404|410|not found|page introuvable|introuvable|n'existe (?:pas|plus)|no longer available|"
-    r"forbidden|enable javascript|too many requests)\b",
+    r"\b(?:(?:error|erreur|http|code|status)\s*[:#-]?\s*(?:404|410)|(?:404|410)\s*(?:[-:|–—]\s*)?"
+    r"(?:error|erreur|not found|page|gone|introuvable)|not found|page introuvable|introuvable|"
+    r"n'existe (?:pas|plus)|no longer available|forbidden|enable javascript|too many requests)\b",
     re.IGNORECASE,
 )
 

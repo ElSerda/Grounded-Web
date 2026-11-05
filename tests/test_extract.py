@@ -64,6 +64,20 @@ def test_block_and_error_pages():
     assert ex.looks_blocked("Access Denied", "You don't have permission to access this server.")
 
 
+def test_error_codes_need_their_context():
+    for title, text in [("Error 404", "Sorry."), ("Oops", "HTTP 404"), ("Not here", "404 Not Found"),
+                        ("Gone", "410 Gone: this item was removed."), ("Erreur", "Erreur 404 : page introuvable")]:
+        assert ex.looks_blocked(title, text), (title, text)
+
+
+def test_a_short_table_with_the_number_404_is_content():
+    # Found with Nemotron: an air travel CSV (404 passengers in September 1958) lost its footer line.
+    csv = ("| Month | 1958 | 1959 |\n| --- | --- | --- |\n| AUG | 505 | 559 |\n"
+           "| SEP | 404 | 463 |\n| OCT | 410 | 407 |")
+    assert ex.looks_blocked("airtravel.csv", csv) == ""
+    assert ex.looks_blocked("Price list", "Model A: 404 EUR. Model B: 410 EUR.") == ""
+
+
 def test_long_pages_are_never_called_blocked():
     assert ex.looks_blocked("HTTP 404 explained", "The 404 status code means not found. " * 60) == ""
 
