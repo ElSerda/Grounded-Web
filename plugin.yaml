@@ -19,10 +19,10 @@ python_dependencies:
 config_schema:
   language:
     type: str
-    choices: [auto, en, fr]
+    choices: [auto, answer, en, fr]
     default: auto
     label: Footer language
-    description: "auto follows the language of the answer"
+    description: "auto follows Hermes's display.language (English for languages other than en/fr); answer follows the language of the reply"
   show_sources:
     type: bool
     default: true

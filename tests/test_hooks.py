@@ -106,3 +106,9 @@ def test_reminder_is_added_to_each_turn_and_can_be_turned_off():
     assert "snippets are not sources" in ctx.hooks["pre_llm_call"](session_id="s1", user_message="q")
     ctx = setup({"remind": False})
     assert ctx.hooks["pre_llm_call"](session_id="s1", user_message="q") is None
+
+
+def test_footer_can_follow_the_answer_language():
+    ctx = setup({"language": "answer"})
+    out = run_turn(ctx, "The card draws 360 W.", [("web_extract", extract_result(PAGE))])
+    assert "Sources (opened pages):" in out

@@ -36,10 +36,23 @@ _FRENCH_WORDS = re.compile(r"\b(?:le|la|les|des|est|une|avec|pour|dans|sur|pas|q
 _ENGLISH_WORDS = re.compile(r"\b(?:the|is|are|with|for|in|on|not|which|that|of|and)\b", re.IGNORECASE)
 
 
+def _answer_language(text: str) -> str:
+    return "fr" if len(_FRENCH_WORDS.findall(text)) > len(_ENGLISH_WORDS.findall(text)) else "en"
+
+
 def language_of(text: str, setting: str = "auto") -> str:
+    """auto: Hermes's display.language, like Hermes's own trailers (other languages get English).
+    answer: the language the answer is written in. en / fr: fixed."""
     if setting in _TEXT:
         return setting
-    return "fr" if len(_FRENCH_WORDS.findall(text)) > len(_ENGLISH_WORDS.findall(text)) else "en"
+    if setting == "auto":
+        try:
+            from agent.i18n import get_language
+            lang = (get_language() or "en").lower().split("-")[0]
+            return lang if lang in _TEXT else "en"
+        except Exception:  # noqa: BLE001 - outside Hermes (tests, tools): fall back to the answer
+            pass
+    return _answer_language(text)
 
 
 def _site(url: str) -> str:

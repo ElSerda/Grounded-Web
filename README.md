@@ -21,7 +21,7 @@ Absent des pages ouvertes : 30 Gbps
 Les pages divergent après « or 8k at » : 165Hz (nvidia.com) / 120Hz (notebookcheck.net)
 ```
 
-The footer follows the language of the answer (English or French).
+The footer is in English or French. By default it follows Hermes's `display.language`, like Hermes's own notices; set `language: answer` to follow the language of the reply instead.
 
 ## Why
 
@@ -84,7 +84,7 @@ Under Settings → Plugins in Hermes Desktop, or `plugins.entries.grounded-web.s
 
 | Key | Default | Meaning |
 |---|---|---|
-| `language` | `auto` | Footer language: `auto`, `en` or `fr` |
+| `language` | `auto` | Footer language: `auto` (Hermes's `display.language`; English for languages other than en/fr), `answer` (the reply's language), `en` or `fr` |
 | `show_sources` | `true` | List the opened pages |
 | `verify` | `true` | Check the answer's values |
 | `remind` | `true` | Add one sentence to each user message (about 50 tokens): search snippets are not sources, open the pages |

@@ -1,47 +1,67 @@
 ---
 name: web-research
-description: "Use for ANY web lookup: specs, news, prices, versions, facts, or 'find/search X'. Search, open the pages, answer from what they say."
-version: 1.0.0
+description: "Answer web questions from opened pages, not snippets."
+version: 1.1.0
 author: ElSerda
 license: MIT
+platforms: [linux, macos, windows]
 metadata:
   hermes:
-    tags: [Research, Web, Search, Citations, Sources]
+    tags: [Research, Web, Search, Grounding, Sources]
     category: research
-    requires_tools: [web_search, web_extract]
+    related_skills: [grounded-citations, pdf]
 ---
 
-# Web Research
+# Web Research Skill
 
-Answer from pages you actually read. Search snippets only tell you which pages to open.
-
-grounded-web adds the list of opened pages to your answer, then checks your values against them. Do not write a sources list.
+Answer from pages you actually read: search to find them, `web_extract` to read them. The
+grounded-web plugin appends the pages you opened and checks the answer's values against them,
+so do not write a sources list yourself. For a document or report with numbered inline
+citations, use `grounded-citations` instead.
 
 ## When to Use
+
 - The user asks to search, find, check or compare something.
-- The answer depends on facts that change or that you cannot be sure of: specs, prices, versions, news, dates.
+- The answer depends on facts that change or that you cannot be sure of: specs, prices,
+  versions, news, dates.
+
+## Prerequisites
+
+The grounded-web plugin, with `web.extract_backend: grounded-web` (run `hermes grounded-web setup`)
+and any search backend for `web_search`.
+
+## Quick Reference
+
+| Step | Tool |
+|---|---|
+| Find candidate pages | `web_search` with a precise query |
+| Read one page or PDF | `web_extract` with one URL |
+| Read a long saved result | `read_file` on the path in `<persisted-output>` |
 
 ## Procedure
-1. Call `web_search` with a precise query. Keep product names and model numbers exact. Use English for technical topics.
-2. Pick the 2 or 3 most relevant results. Prefer official sources: maker pages, datasheets, documentation.
-3. Call `web_extract` with one URL per call, never several URLs together. It reads PDFs too, so open datasheets directly.
+
+1. Call `web_search` with a precise query. Keep product names and model numbers exact. Use
+   English for technical topics.
+2. Pick the 2 or 3 most relevant results. Prefer official sources: maker pages, datasheets,
+   documentation.
+3. Call `web_extract` with one URL per call, never several URLs together. It reads PDFs too, so
+   open datasheets directly.
 4. If a result returns `error`, open the next result. One failure never ends the research.
 5. If the pages do not answer the question, search again with different words, up to 3 searches.
-6. Answer using only facts found in the pages you opened.
-
-## Rules
-- Never answer from snippets alone when a page can be opened.
-- Never say a tool cannot reach the information before trying it.
-- If a fact was not found, say so plainly. Do not fill the gap from memory.
-- If a fact comes from memory, mark it `(from memory, not verified)`.
-- Keep numbers and units exactly as written in the source.
-- If two sources disagree, give both values with their sources. Prefer the maker's page.
-- If `web_search` itself fails, say so and retry once before giving up.
+6. Answer using only facts found in the pages you opened. Keep numbers and units as written.
 
 ## Pitfalls
+
+- Search snippets are not sources, even when they hold numbers. Open the page.
+- Never say a tool cannot reach the information before trying it.
+- A fact you did not find stays missing: say so. A fact from memory is marked
+  `(from memory, not verified)`.
 - Marketing pages often omit specs. Look for the datasheet or a detailed review.
-- Reseller and review pages can copy the wrong values. Prefer the maker when values differ.
-- A `<persisted-output>` result is only a preview. Read the saved file with `read_file` before using it.
+- Reseller and review pages can copy the wrong values. When sources disagree, give both values
+  and prefer the maker's page.
+- A `<persisted-output>` result is only a preview. Read the saved file with `read_file`.
 
 ## Verification
-Before answering, check that you called `web_extract` and that the facts you give appear in those pages.
+
+Before answering, check that you called `web_extract` and that every value you give appears in
+those pages. The plugin's footer reports any value it could not find.
